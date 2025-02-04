@@ -1,4 +1,6 @@
-# OpenDeepResearcher via Searxng with citations and planning from reasoning models
+# OpenDeepResearcher🧑‍🔬 via Searxng 
+
+## Noe with citations🧑‍🏫 and planning agent🤖 from reasoning models!!
 
 This notebook implements an **AI researcher** that continuously searches for information based on a user query until the system is confident that it has gathered all the necessary details. It makes use of several services to do so:
 
@@ -40,6 +42,12 @@ graph LR;
   - **OpenRouter API**
   - **Jina API**
 - Local or public instance of **Searxng**
+   - Get started locally
+      - `docker run -d --name searxng --restart always -v $(pwd)/searxng:/etc/searxng:rw -p 4000:8080 docker.io/searxng/searxng:latest`
+      - More at [https://docs.searxng.org/admin/installation-docker.html#installation-docker](https://docs.searxng.org/admin/installation-docker.html#installation-docker)
+   - Public instance
+     - [searx-instances](https://github.com/searx/searx-instances)
+     - May have rate limits or usage logging
 
 ## Setup
 
