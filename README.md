@@ -1,10 +1,16 @@
-# OpenDeepResearcher via Searxng with proper citations
+# OpenDeepResearcher via Searxng with citations and planning from reasoning models
 
 This notebook implements an **AI researcher** that continuously searches for information based on a user query until the system is confident that it has gathered all the necessary details. It makes use of several services to do so:
 
 - **SEARXNG**: To perform searches without bias and privately.
 - **Jina**: To fetch and extract webpage content.
-- **OpenRouter** (default model: `anthropic/claude-3.5-haiku`): To interact with a LLM for generating search queries, evaluating page relevance, and extracting context.
+- **OpenRouter**: To interact with a LLM for generating search queries, evaluating page relevance, and extracting context.
+   - default searching and writing model: `anthropic/claude-3.5-haiku`
+   - default reasoning and planning model: `deepseek/deepseek-r1-distill-qwen-32b`
+
+## TL;DR
+
+Run [open_deep_researcher.ipynb](open_deep_researcher.ipynb) to save money, run [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb) to get better quality with reasoning.
 
 ## Features
 
@@ -12,6 +18,21 @@ This notebook implements an **AI researcher** that continuously searches for inf
 - **Asynchronous Processing:** Searches, webpage fetching, evaluation, and context extraction are performed concurrently to improve speed.
 - **Duplicate Filtering:** Aggregates and deduplicates links within each round, ensuring that the same link isn’t processed twice.
 - **LLM-Powered Decision Making:** Uses the LLM to generate new search queries, decide on page usefulness, extract relevant context, and produce a final comprehensive report, now with citations.
+- **Plans made with Reasoning:** Before each iteration, a reasoning model will plan what to search, what to search more and how to write the final report to ensure robust planning strategy and good final quality. (only with [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb))
+
+## Planning via Reasoning
+
+```mermaid
+graph LR;
+    A[User Query] --> B[Reasoning Model: Generate Initial Research Plan]
+    B --> C[Search Agent: Conduct Search]
+    C --> D[Reasoning Model: Evaluate Search Results]
+    D -->|More Research Needed| C
+    D -->|Search Complete or Max iterations| E[Reasoning Model: Generate Writing Plan]
+    E --> F[Writing Agent: Write Final Report]
+    style A fill:#f9f,stroke:#333,stroke-width:2px;
+    style F fill:#ccf,stroke:#333,stroke-width:2px;
+```
 
 ## Requirements
 
@@ -81,8 +102,8 @@ This notebook implements an **AI researcher** that continuously searches for inf
 
 ---
 
-Follow original author on [X](https://x.com/mattshumer_) for updates on the base code.
+Follow original author Matt on [X](https://x.com/mattshumer_) for updates on the base code.
 
-Follow this repo for updates from my side.
+Follow this repo for updates from my side for academic use.
 
 OpenDeepResearcher and OpenDeepResearcher-via-searxng are released under the MIT License. See the LICENSE file for more details.
