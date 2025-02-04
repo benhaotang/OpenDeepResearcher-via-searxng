@@ -1,8 +1,8 @@
-# OpenDeepResearcher
+# OpenDeepResearcher via Searxng with proper citations
 
 This notebook implements an **AI researcher** that continuously searches for information based on a user query until the system is confident that it has gathered all the necessary details. It makes use of several services to do so:
 
-- **SERPAPI**: To perform Google searches.
+- **SEARXNG**: To perform searches without bias and privately.
 - **Jina**: To fetch and extract webpage content.
 - **OpenRouter** (default model: `anthropic/claude-3.5-haiku`): To interact with a LLM for generating search queries, evaluating page relevance, and extracting context.
 
@@ -11,27 +11,29 @@ This notebook implements an **AI researcher** that continuously searches for inf
 - **Iterative Research Loop:** The system refines its search queries iteratively until no further queries are required.
 - **Asynchronous Processing:** Searches, webpage fetching, evaluation, and context extraction are performed concurrently to improve speed.
 - **Duplicate Filtering:** Aggregates and deduplicates links within each round, ensuring that the same link isn’t processed twice.
-- **LLM-Powered Decision Making:** Uses the LLM to generate new search queries, decide on page usefulness, extract relevant context, and produce a final comprehensive report.
-- **Gradio Interface:** Use the `open-deep-researcher - gradio` notebook if you want to use this in a functional UI
+- **LLM-Powered Decision Making:** Uses the LLM to generate new search queries, decide on page usefulness, extract relevant context, and produce a final comprehensive report, now with citations.
 
 ## Requirements
 
 - API access and keys for:
   - **OpenRouter API**
-  - **SERPAPI API**
   - **Jina API**
+- Local or public instance of **Searxng**
 
 ## Setup
 
 1. **Clone or Open the Notebook:**
-   - Download the notebook file or open it directly in [Google Colab](https://colab.research.google.com/github/mshumer/OpenDeepResearcher/blob/main/open_deep_researcher.ipynb).
+   - Download the notebook file.
 
 2. **Install `nest_asyncio`:**
 
    Run the first cell to set up `nest_asyncio`.
 
 3. **Configure API Keys:**
-   - Replace the placeholder values in the notebook for `OPENROUTER_API_KEY`, `SERPAPI_API_KEY`, and `JINA_API_KEY` with your actual API keys.
+   - Replace the placeholder values in the notebook for `OPENROUTER_API_KEY`, and `JINA_API_KEY` with your actual API keys.
+
+4. **Set Base Searxng URL**
+   - Replace the placeholder values in the notebook for `BASE_SEARXNG_URL` with the instance you like.
 
 ## Usage
 
@@ -55,7 +57,7 @@ This notebook implements an **AI researcher** that continuously searches for inf
    The user enters a research topic, and the LLM generates up to four distinct search queries.
 
 2. **Concurrent Search & Processing:**  
-   - **SERPAPI:** Each search query is sent to SERPAPI concurrently.
+   - **SEARXNG:** Each search query is sent to searxng concurrently.
    - **Deduplication:** All retrieved links are aggregated and deduplicated within the current iteration.
    - **Jina & LLM:** Each unique link is processed concurrently to fetch webpage content via Jina, evaluate its usefulness with the LLM, and extract relevant information if the page is deemed useful.
 
@@ -63,7 +65,7 @@ This notebook implements an **AI researcher** that continuously searches for inf
    The system passes the aggregated context to the LLM to determine if further search queries are needed. New queries are generated if required; otherwise, the loop terminates.
 
 4. **Final Report Generation:**  
-   All gathered context is compiled and sent to the LLM to produce a final, comprehensive report addressing the original query.
+   All gathered context is compiled and sent to the LLM to produce a final, comprehensive report addressing the original query. And the llm is instructed to properly cite the sources and summarize all the citations into a bibliography list.
 
 ## Troubleshooting
 
@@ -79,6 +81,8 @@ This notebook implements an **AI researcher** that continuously searches for inf
 
 ---
 
-Follow me on [X](https://x.com/mattshumer_) for updates on this and other AI things I'm working on.
+Follow original author on [X](https://x.com/mattshumer_) for updates on the base code.
 
-OpenDeepResearcher is released under the MIT License. See the LICENSE file for more details.
+Follow this repo for updates from my side.
+
+OpenDeepResearcher and OpenDeepResearcher-via-searxng are released under the MIT License. See the LICENSE file for more details.
