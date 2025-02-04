@@ -1,6 +1,6 @@
-# OpenDeepResearcher🧑‍🔬 via Searxng 
+# OpenDeepResearcher via Searxng 🧑‍🔬
 
-## Noe with citations🧑‍🏫 and planning agent🤖 from reasoning models!!
+## Now with citations🧑‍🏫 and planning agent🤖 from reasoning models!!
 
 This notebook implements an **AI researcher** that continuously searches for information based on a user query until the system is confident that it has gathered all the necessary details. It makes use of several services to do so:
 
@@ -95,6 +95,11 @@ graph LR;
 
 4. **Final Report Generation:**  
    All gathered context is compiled and sent to the LLM to produce a final, comprehensive report addressing the original query. And the llm is instructed to properly cite the sources and summarize all the citations into a bibliography list.
+
+## Roadmap
+
+- [] Support Playwright to bypass publisher limits with library proxy
+- [] Refine process and reduce token usage
 
 ## Troubleshooting
 
