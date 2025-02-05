@@ -1,4 +1,4 @@
-# OpenDeepResearcher via Searxng 🧑‍🔬 (Ollama and PlayWright)
+# OpenDeepResearcher via Searxng 🧑‍🔬 (Ollama and PlayWright for complete local operation)
 
 > [!TIP]
 > **What is different with the original repo?**
@@ -18,10 +18,10 @@
    - **🏎️ Faster**: [local_open_deep_researcher.ipynb](local_open_deep_researcher.ipynb)
    - **🚗 Slower but higher quality**: [local_open_deep_researcher_with_planning.ipynb](local_open_deep_researcher_with_planning.ipynb)
 - 💻 Want completely local?
-   - **🚶 Slowest but everything happen on device** [local_open_deep_researcher_via_playwright.ipynb](local_open_deep_researcher_via_playwright.ipynb)
+   - **🚶 Slowest but everything happen on device** [local_open_deep_researcher_via_playwright.ipynb](local_open_deep_researcher_via_playwright.ipynb) *[Tested]*
       - Change `BROWSE_LITE` to 1 to speed up parsing without using reader-lm and docling
-      - **Planning?**:  [local_open_deep_researcher_with_planning_via_playwright.ipynb](local_open_deep_researcher_with_planning_via_playwright.ipynb) 
-         - ⚠️ Note: I have not personally tested this, because my machine cannot even finish at this stage, please if you can run, share your experience with me.
+      - **Planning?**:  [local_open_deep_researcher_with_planning_via_playwright.ipynb](local_open_deep_researcher_with_planning_via_playwright.ipynb)  *[Untested]*
+         - ⚠️ Note: I have not personally tested local planning, because my machine cannot even finish at this stage, please if you can run, share your experience with me.
 
 ## 📝 General INFO
 
