@@ -1,18 +1,31 @@
-# OpenDeepResearcher via Searxng 🧑‍🔬
+# OpenDeepResearcher via Searxng 🧑‍🔬 (and Ollama)
 
-## Now with citations🧑‍🏫 and planning agent🤖 from reasoning models!!
+> [!TIP]
+> - Use Searxng to reduce bias and improve privacy.
+> - Report have citations🧑‍🏫!
+> - Planning agent🤖 from reasoning models!!
+> - Ollama support for local AI interface:computer: for maximal privacy!
+> - Some refinement to reduce search query fail rate and token use.
+
+## TL;DR
+
+Run [open_deep_researcher.ipynb](open_deep_researcher.ipynb) to **save money**, run [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb) to get **better quality** with reasoning.
+
+Run [local_open_deep_researcher.ipynb](local_open_deep_researcher.ipynb) and [local_open_deep_researcher_with_planning.ipynb](local_open_deep_researcher_with_planning.ipynb) for **private local AI service** via ollama!
+
+## General INFO:memo:
 
 This notebook implements an **AI researcher** that continuously searches for information based on a user query until the system is confident that it has gathered all the necessary details. It makes use of several services to do so:
 
 - **SEARXNG**: To perform searches without bias and privately.
 - **Jina**: To fetch and extract webpage content.
-- **OpenRouter**: To interact with a LLM for generating search queries, evaluating page relevance, and extracting context.
-   - default searching and writing model: `anthropic/claude-3.5-haiku`
-   - default reasoning and planning model: `deepseek/deepseek-r1-distill-qwen-32b`
-
-## TL;DR
-
-Run [open_deep_researcher.ipynb](open_deep_researcher.ipynb) to save money, run [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb) to get better quality with reasoning.
+- **LLM Provider**: To interact with a LLM for generating search queries, evaluating page relevance, and extracting context.
+   - **OpenRouter**: Paid, but fast
+      - default searching and writing model: `anthropic/claude-3.5-haiku`
+      - default reasoning and planning model: `deepseek/deepseek-r1-distill-qwen-32b`
+   - *[NEW]* **Ollama**: Private, but a lot slower
+      - default searching and writing model: `mistral-small` via `ollama pull mistral-small`
+      - default reasoning and planning model: `deepseek-r1:14b` via `ollama pull deepseek-r1:14b`
 
 ## Features
 
@@ -20,7 +33,8 @@ Run [open_deep_researcher.ipynb](open_deep_researcher.ipynb) to save money, run 
 - **Asynchronous Processing:** Searches, webpage fetching, evaluation, and context extraction are performed concurrently to improve speed.
 - **Duplicate Filtering:** Aggregates and deduplicates links within each round, ensuring that the same link isn’t processed twice.
 - **LLM-Powered Decision Making:** Uses the LLM to generate new search queries, decide on page usefulness, extract relevant context, and produce a final comprehensive report, now with citations.
-- **Plans made with Reasoning:** Before each iteration, a reasoning model will plan what to search, what to search more and how to write the final report to ensure robust planning strategy and good final quality. (only with [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb))
+- **Plans made with Reasoning:** Before each iteration, a reasoning model will plan what to search, what to search more and how to write the final report to ensure robust planning strategy and good final quality. (only with [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb) and [local_open_deep_researcher_with_planning.ipynb](local_open_deep_researcher_with_planning.ipynb))
+- **Local models for maximum privacy**
 
 ## Planning via Reasoning
 
@@ -48,6 +62,7 @@ graph LR;
    - Public instance
      - [searx-instances](https://github.com/searx/searx-instances)
      - May have rate limits or usage logging
+- Local Ollama: check out [ollama.com](https://ollama.com)
 
 ## Setup
 
@@ -98,8 +113,10 @@ graph LR;
 
 ## Roadmap
 
-- [] Support Playwright to bypass publisher limits with library proxy
-- [] Refine process and reduce token usage
+- [x] Support Ollama
+- [ ] Support Playwright to bypass publisher limits with library proxy
+- [ ] Use Playwright and Ollama's reader-lm to achieve 100% local service
+- [ ] Refine process and reduce token usage
 
 ## Troubleshooting
 
@@ -113,10 +130,13 @@ graph LR;
 - **API Issues:**  
   Verify that your API keys are correct and that you are not exceeding any rate limits.
 
+- **Jina URL resolve issue**
+   Wait and try again, this is usually due to high load.
+
 ---
 
 Follow original author Matt on [X](https://x.com/mattshumer_) for updates on the base code.
 
-Follow this repo for updates from my side for academic use.
+Follow this repo for updates from my side for academic and local use.
 
 OpenDeepResearcher and OpenDeepResearcher-via-searxng are released under the MIT License. See the LICENSE file for more details.
