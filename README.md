@@ -2,18 +2,18 @@
 
 > [!TIP]
 > - Use Searxng to reduce bias and improve privacy.
-> - Report have citations🧑‍🏫!
+> - Report have citations📰!
 > - Planning agent🤖 from reasoning models!!
-> - Ollama support for local AI interface:computer: for maximal privacy!
+> - Ollama support for local AI interface💻 for maximal privacy!
 > - Some refinement to reduce search query fail rate and token use.
 
-## TL;DR
+## 🧑‍🏫 TL;DR
 
 Run [open_deep_researcher.ipynb](open_deep_researcher.ipynb) to **save money**, run [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb) to get **better quality** with reasoning.
 
 Run [local_open_deep_researcher.ipynb](local_open_deep_researcher.ipynb) and [local_open_deep_researcher_with_planning.ipynb](local_open_deep_researcher_with_planning.ipynb) for **private local AI service** via ollama!
 
-## General INFO:memo:
+## 📝 General INFO
 
 This notebook implements an **AI researcher** that continuously searches for information based on a user query until the system is confident that it has gathered all the necessary details. It makes use of several services to do so:
 
@@ -27,7 +27,7 @@ This notebook implements an **AI researcher** that continuously searches for inf
       - default searching and writing model: `mistral-small` via `ollama pull mistral-small`
       - default reasoning and planning model: `deepseek-r1:14b` via `ollama pull deepseek-r1:14b`
 
-## Features
+## ☑️ Features
 
 - **Iterative Research Loop:** The system refines its search queries iteratively until no further queries are required.
 - **Asynchronous Processing:** Searches, webpage fetching, evaluation, and context extraction are performed concurrently to improve speed.
@@ -36,7 +36,7 @@ This notebook implements an **AI researcher** that continuously searches for inf
 - **Plans made with Reasoning:** Before each iteration, a reasoning model will plan what to search, what to search more and how to write the final report to ensure robust planning strategy and good final quality. (only with [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb) and [local_open_deep_researcher_with_planning.ipynb](local_open_deep_researcher_with_planning.ipynb))
 - **Local models for maximum privacy**
 
-## Planning via Reasoning
+## 🗺️ Planning via Reasoning
 
 ```mermaid
 graph LR;
@@ -50,7 +50,7 @@ graph LR;
     style F fill:#ccf,stroke:#333,stroke-width:2px;
 ```
 
-## Requirements
+## 🧰 Requirements
 
 - API access and keys for:
   - **OpenRouter API**
@@ -64,7 +64,7 @@ graph LR;
      - May have rate limits or usage logging
 - Local Ollama: check out [ollama.com](https://ollama.com)
 
-## Setup
+## 💾 Setup
 
 1. **Clone or Open the Notebook:**
    - Download the notebook file.
@@ -79,7 +79,7 @@ graph LR;
 4. **Set Base Searxng URL**
    - Replace the placeholder values in the notebook for `BASE_SEARXNG_URL` with the instance you like.
 
-## Usage
+## 🧑‍🔬 Usage
 
 1. **Run the Notebook Cells:**
    Execute all cells in order. The notebook will prompt you for:
@@ -95,7 +95,7 @@ graph LR;
 3. **View the Final Report:**
    The final comprehensive report will be printed in the output.
 
-## How It Works
+## ❓ How It Works
 
 1. **Input & Query Generation:**  
    The user enters a research topic, and the LLM generates up to four distinct search queries.
@@ -111,14 +111,14 @@ graph LR;
 4. **Final Report Generation:**  
    All gathered context is compiled and sent to the LLM to produce a final, comprehensive report addressing the original query. And the llm is instructed to properly cite the sources and summarize all the citations into a bibliography list.
 
-## Roadmap
+## 🏁 Roadmap
 
 - [x] Support Ollama
 - [ ] Support Playwright to bypass publisher limits with library proxy
 - [ ] Use Playwright and Ollama's reader-lm to achieve 100% local service
 - [ ] Refine process and reduce token usage
 
-## Troubleshooting
+## 💡 Troubleshooting
 
 - **RuntimeError with asyncio:**  
   If you encounter an error like:
