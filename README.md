@@ -1,24 +1,38 @@
-# OpenDeepResearcher via Searxng 🧑‍🔬 (and Ollama)
+# OpenDeepResearcher via Searxng 🧑‍🔬 (Ollama and PlayWright)
 
 > [!TIP]
 > - Use Searxng to reduce bias and improve privacy.
 > - Report have citations📰!
 > - Planning agent🤖 from reasoning models!!
 > - Ollama support for local AI interface💻 for maximal privacy!
+> - *[experimental]* Playwright🔗 support via Chrome/Chromium debug mode, parse webpage with local [reader-lm](https://huggingface.co/jinaai/reader-lm-1.5b), pdfs with [docling](https://github.com/DS4SD/docling)
 > - Some refinement to reduce search query fail rate and token use.
 
 ## 🧑‍🏫 TL;DR
 
-Run [open_deep_researcher.ipynb](open_deep_researcher.ipynb) to **save money**, run [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb) to get **better quality** with reasoning.
-
-Run [local_open_deep_researcher.ipynb](local_open_deep_researcher.ipynb) and [local_open_deep_researcher_with_planning.ipynb](local_open_deep_researcher_with_planning.ipynb) for **private local AI service** via ollama!
+- 🌐 Online service for maximum speed?
+   - **💸 Save money?** [open_deep_researcher.ipynb](open_deep_researcher.ipynb)
+   - **💎 Absolute quality?** [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb)
+- 🧭 Balance Speed and privacy
+   - **🏎️ Faster**: [local_open_deep_researcher.ipynb](local_open_deep_researcher.ipynb)
+   - **🚗 Slower but higher quality**: [local_open_deep_researcher_with_planning.ipynb](local_open_deep_researcher_with_planning.ipynb)
+- 💻 Want completely local?
+   - **🚶 Slowest but everything happen on device** [local_open_deep_researcher_via_playwright.ipynb](local_open_deep_researcher_via_playwright.ipynb)
+      - Change `BROWSE_LITE` to 1 to speed up parsing without using reader-lm and docling
+      - **Planning?**:  [local_open_deep_researcher_with_planning_via_playwright.ipynb](local_open_deep_researcher_with_planning_via_playwright.ipynb) 
+         - ⚠️ Note: I have not personally tested this, because my machine cannot even finish at this stage, please if you can run, share your experience with me.
 
 ## 📝 General INFO
 
 This notebook implements an **AI researcher** that continuously searches for information based on a user query until the system is confident that it has gathered all the necessary details. It makes use of several services to do so:
 
 - **SEARXNG**: To perform searches without bias and privately.
-- **Jina**: To fetch and extract webpage content.
+- **Content Parser**
+   - **Jina**: To fetch and extract webpage content fast and reliable.
+   - **Local solutions**:
+      - [reader-lm](https://huggingface.co/jinaai/reader-lm-1.5b) by Jina via ollama for webpage parsing `ollama pull reader-lm:0.5b`
+      - [docling](https://github.com/DS4SD/docling) for PDF OCRs
+      - **WARNING: This is highly experimental, your instance may hang for long time due to poor compute power!! Use at your own risk.**
 - **LLM Provider**: To interact with a LLM for generating search queries, evaluating page relevance, and extracting context.
    - **OpenRouter**: Paid, but fast
       - default searching and writing model: `anthropic/claude-3.5-haiku`
@@ -63,6 +77,7 @@ graph LR;
      - [searx-instances](https://github.com/searx/searx-instances)
      - May have rate limits or usage logging
 - Local Ollama: check out [ollama.com](https://ollama.com)
+- A Chrome/Chromium browser running in debug mode `chromium --remote-debugging-port=9222 [--user-data-dir=/path/to/profile]`
 
 ## 💾 Setup
 
@@ -78,6 +93,14 @@ graph LR;
 
 4. **Set Base Searxng URL**
    - Replace the placeholder values in the notebook for `BASE_SEARXNG_URL` with the instance you like.
+
+5. If using playwright?
+   - Chrome/Chromium browser installed.
+   - Launch debug mode with `chromium --remote-debugging-port=9222 [--user-data-dir=/path/to/profile]`, change the `CHROME_PORT` accordingly.
+   - Full Mode(`BROWSE_LITE=0`) or Lite Mode(`BROWSE_LITE=1`)?
+      - Full Mode parse html to markdown with reader-lm and OCR PDFs with docling, great quality, but can be extremely slow.
+      - Lite Mode works like the reader view in browser, fast but may not get everything.
+   - Modify other parameters in `Parsing settings` to better suit your machine's ability.
 
 ## 🧑‍🔬 Usage
 
@@ -114,9 +137,11 @@ graph LR;
 ## 🏁 Roadmap
 
 - [x] Support Ollama
-- [ ] Support Playwright to bypass publisher limits with library proxy
-- [ ] Use Playwright and Ollama's reader-lm to achieve 100% local service
+- [x] Support Playwright to bypass publisher limits with library proxy (*[TIP]* You can now just launch the browser with credentials logged in with your profile)
+- [x] Use Playwright and Ollama's reader-lm to achieve 100% local service
 - [ ] Refine process and reduce token usage
+- [ ] Make into a pip package for easy install
+- [ ] Integrate tool calling
 
 ## 💡 Troubleshooting
 
