@@ -1,6 +1,7 @@
 # OpenDeepResearcher via Searxng 🧑‍🔬 (Ollama and PlayWright)
 
 > [!TIP]
+> **What is different with the original repo?**
 > - Use Searxng to reduce bias and improve privacy.
 > - Report have citations📰!
 > - Planning agent🤖 from reasoning models!!
