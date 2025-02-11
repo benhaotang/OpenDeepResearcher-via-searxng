@@ -1,0 +1,840 @@
+import nest_asyncio
+nest_asyncio.apply()
+import asyncio
+import aiohttp
+import re
+import ast
+import time
+from pathlib import Path
+from collections import defaultdict
+from urllib.parse import urlparse
+import mimetypes
+from playwright.async_api import async_playwright
+from docling.document_converter import DocumentConverter
+import configparser
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse, JSONResponse
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+
+# FastAPI app
+app = FastAPI(title="Deep Researcher API")
+
+# API Models
+class Message(BaseModel):
+    role: str
+    content: str
+
+class ChatCompletionRequest(BaseModel):
+    model: str = Field(default="deep_researcher")
+    messages: List[Message]
+    stream: bool = False
+    max_iterations: Optional[int] = Field(default=10, ge=1, le=50)
+    max_search_items: Optional[int] = Field(default=4, ge=1, le=20)
+
+class ChatCompletionChoice(BaseModel):
+    index: int
+    message: Message
+    finish_reason: str
+
+class ChatCompletionResponse(BaseModel):
+    id: str
+    object: str = "chat.completion"
+    created: int
+    model: str
+    choices: List[ChatCompletionChoice]
+
+class DeltaMessage(BaseModel):
+    role: Optional[str] = None
+    content: Optional[str] = None
+
+class ChatCompletionChunk(BaseModel):
+    id: str
+    object: str = "chat.completion.chunk"
+    created: int
+    model: str
+    choices: List[Dict[str, Any]]
+
+# Load configuration
+config = configparser.ConfigParser()
+config.read('research.config')
+
+# ---------------------------
+# Local AI
+# ---------------------------
+from ollama import AsyncClient
+OLLAMA_BASE_URL = config.get('LocalAI', 'ollama_base_url')
+
+# ---------------------------
+# Configuration Constants
+# ---------------------------
+OPENROUTER_API_KEY = config.get('API', 'openrouter_api_key')
+JINA_API_KEY = config.get('API', 'jina_api_key')
+OPENROUTER_URL = config.get('API', 'openrouter_url')
+JINA_BASE_URL = config.get('API', 'jina_base_url')
+BASE_SEARXNG_URL = config.get('API', 'searxng_url')
+
+USE_JINA = config.getboolean('Settings', 'use_jina')
+WITH_PLANNING = config.getboolean('Settings', 'with_planning')
+DEFAULT_MODEL = config.get('Settings', 'default_model')
+REASON_MODEL = config.get('Settings', 'reason_model')
+
+# ---------------------
+# Concurrency control
+# ---------------------
+concurrent_limit = config.getint('Concurrency', 'concurrent_limit')
+cool_down = config.getfloat('Concurrency', 'cool_down')
+CHROME_PORT = config.getint('Concurrency', 'chrome_port')
+global_semaphore = asyncio.Semaphore(concurrent_limit)
+domain_locks = defaultdict(asyncio.Lock)  # domain -> asyncio.Lock
+domain_next_allowed_time = defaultdict(lambda: 0.0)  # domain -> float (epoch time)
+
+# ---------------------
+# Parsing settings
+# ---------------------
+TEMP_PDF_DIR = Path(config.get('Parsing', 'temp_pdf_dir'))
+BROWSE_LITE = config.getint('Parsing', 'browse_lite')
+PDF_MAX_PAGES = config.getint('Parsing', 'pdf_max_pages')
+PDF_MAX_FILESIZE = config.getint('Parsing', 'pdf_max_filesize')
+TIMEOUT_PDF = config.getint('Parsing', 'timeout_pdf')
+MAX_HTML_LENGTH = config.getint('Parsing', 'max_html_length')
+MAX_EVAL_TIME = config.getint('Parsing', 'max_eval_time')
+
+# ----------------------
+# Openrouter
+# ----------------------
+async def call_openrouter_async(session, messages, model=DEFAULT_MODEL):
+    """
+    Asynchronously call the OpenRouter chat completion API with the provided messages.
+    Returns the content of the assistant’s reply.
+    """
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "X-Title": "OpenDeepResearcher, by Matt Shumer and Benhao Tang",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": messages
+    }
+    try:
+        async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
+            if resp.status == 200:
+                result = await resp.json()
+                try:
+                    return result['choices'][0]['message']['content']
+                except (KeyError, IndexError) as e:
+                    print("Unexpected OpenRouter response structure:", result)
+                    return None
+            else:
+                text = await resp.text()
+                print(f"OpenRouter API error: {resp.status} - {text}")
+                return None
+    except Exception as e:
+        print("Error calling OpenRouter:", e)
+        return None
+
+# --------------------------
+# Local AI and Browser use
+# --------------------------
+
+async def call_ollama_async(session, messages, model=DEFAULT_MODEL, max_tokens=20000):
+    """
+    Asynchronously call the Ollama chat completion API with the provided messages.
+    Returns the content of the assistant’s reply.
+    """
+    try:
+        client = AsyncClient(host=OLLAMA_BASE_URL)
+        response_content = ""
+
+        async for part in await client.chat(model=model, messages=messages, stream=True, options=dict(num_predict=max_tokens)):
+            if 'message' in part and 'content' in part['message']:
+                response_content += part['message']['content']
+
+        return response_content if response_content else None
+    except Exception as e:
+        print(f"Error calling Ollama API: {e}")
+        return None
+
+def is_pdf_url(url):
+    parsed_url = urlparse(url)
+    if parsed_url.path.lower().endswith(".pdf"):
+        return True
+    mime_type, _ = mimetypes.guess_type(url)
+    return mime_type == "application/pdf"
+
+def get_domain(url):
+    parsed = urlparse(url)
+    return parsed.netloc.lower()
+
+# Global lock to ensure only one PDF processing task runs at a time
+pdf_processing_lock = asyncio.Lock()
+
+async def process_pdf(pdf_path):
+    """
+    Converts a local PDF file to text using Docling.
+    Ensures only one PDF processing task runs at a time to prevent GPU OutOfMemoryError.
+    """
+    converter = DocumentConverter()
+
+    async def docling_task():
+        return converter.convert(str(pdf_path), max_num_pages=PDF_MAX_PAGES, max_file_size=PDF_MAX_FILESIZE)
+
+    # Ensure no other async task runs while processing the PDF
+    async with pdf_processing_lock:
+        try:
+            return await asyncio.wait_for(docling_task(), TIMEOUT_PDF)  # Enforce timeout
+        except asyncio.TimeoutError:
+            return "Parser unable to parse the resource within defined time."
+
+async def download_pdf(page, url):
+    """
+    Downloads a PDF from a webpage using Playwright and saves it locally.
+    """
+    pdf_filename = TEMP_PDF_DIR / f"{hash(url)}.pdf"
+
+    async def intercept_request(request):
+        """Intercepts request to log PDF download attempts."""
+        if request.resource_type == "document":
+            print(f"Downloading PDF: {request.url}")
+
+    # Attach the request listener
+    page.on("request", intercept_request)
+
+    try:
+        await page.goto(url, timeout=30000)  # 30 seconds timeout
+        await page.wait_for_load_state("networkidle")
+        
+        # Attempt to save PDF (works for direct links)
+        await page.pdf(path=str(pdf_filename))
+        return pdf_filename
+
+    except Exception as e:
+        print(f"Error downloading PDF {url}: {e}")
+        return None
+
+async def get_cleaned_html(page):
+    """
+    Extracts cleaned HTML from a page while enforcing a timeout.
+    """
+    try:
+        cleaned_html = await asyncio.wait_for(
+            page.evaluate("""
+                () => {
+                    let clone = document.cloneNode(true);
+                    
+                    // Remove script, style, and noscript elements
+                    clone.querySelectorAll('script, style, noscript').forEach(el => el.remove());
+                    
+                    // Optionally remove navigation and footer
+                    clone.querySelectorAll('nav, footer, aside').forEach(el => el.remove());
+                    
+                    return clone.body.innerHTML;
+                }
+            """),
+            timeout=MAX_EVAL_TIME
+        )
+        return cleaned_html
+    except asyncio.TimeoutError:
+        return "Parser unable to extract HTML within defined time."
+
+
+async def fetch_webpage_text_async(session, url):
+    if USE_JINA:
+        """
+        Asynchronously retrieve the text content of a webpage using Jina.
+        The URL is appended to the Jina endpoint.
+        """
+        full_url = f"{JINA_BASE_URL}{url}"
+        headers = {
+            "Authorization": f"Bearer {JINA_API_KEY}"
+        }
+        try:
+            async with session.get(full_url, headers=headers) as resp:
+                if resp.status == 200:
+                    return await resp.text()
+                else:
+                    text = await resp.text()
+                    print(f"Jina fetch error for {url}: {resp.status} - {text}")
+                    return ""
+        except Exception as e:
+            print("Error fetching webpage text with Jina:", e)
+            return ""
+    else:
+        """
+        Fetches webpage HTML using Playwright, processes it using Ollama reader-lm:1.5b,
+        or downloads and processes a PDF using Docling.
+        Respects concurrency limits and per-domain cooldown.
+        """
+        domain = get_domain(url)
+
+        async with global_semaphore:  # Global concurrency limit
+            async with domain_locks[domain]:  # Ensure only one request per domain at a time
+                now = time.time()
+                if now < domain_next_allowed_time[domain]:
+                    await asyncio.sleep(domain_next_allowed_time[domain] - now)  # Respect per-domain cooldown
+
+                async with async_playwright() as p:
+                    # Attempt to connect to an already running Chrome instance
+                    try:
+                        browser = await p.chromium.connect_over_cdp(f"http://localhost:{CHROME_PORT}")
+                    except Exception as e:
+                        print(f"Error connecting to Chrome on port {CHROME_PORT}: {e}")
+                        return f"Failed to connect to Chrome on port {CHROME_PORT}"
+
+                    context = await browser.new_context()
+                    page = await context.new_page()
+
+                    # PDFs
+                    if is_pdf_url(url):
+                        if BROWSE_LITE:
+                            result = "PDF parsing is disabled in lite browsing mode."
+                        else:
+                            pdf_path = await download_pdf(page, url)
+                            if pdf_path:
+                                text = await process_pdf(pdf_path)
+                                result = f"# PDF Content\n{text}"
+                            else:
+                                result = "Failed to download or process PDF"
+                    else:
+                        try:
+                            await page.goto(url, timeout=30000) # 30 seconds timeout to wait for loading
+                            title = await page.title() or "Untitled Page"
+                            if BROWSE_LITE:
+                                # Extract main content using JavaScript inside Playwright
+                                main_content = await page.evaluate("""
+                                    () => {
+                                        let mainEl = document.querySelector('main') || document.body;
+                                        return mainEl.innerText.trim();
+                                    }
+                                """)
+                                result = f"# {title}\n{main_content}"
+                            else:
+                                # Clean HTML before sending to reader-lm
+                                cleaned_html = await get_cleaned_html(page)
+                                cleaned_html = cleaned_html[:MAX_HTML_LENGTH] # Enforce a Maximum length for a webpage
+                                messages = [{"role": "user", "content": cleaned_html}]
+                                markdown_text = await call_ollama_async(session, messages, model="reader-lm:0.5b", max_tokens=int(1.25*MAX_HTML_LENGTH)) # Don't get stuck when exceed reader-lm ctx
+                                result = f"# {title}\n{markdown_text}"
+
+                        except Exception as e:
+                            print(f"Error fetching webpage: {e}")
+                            result = f"Failed to fetch {url}"
+
+                    await browser.close()
+
+                # Update next allowed time for this domain (cool down time per domain)
+                domain_next_allowed_time[domain] = time.time() + cool_down
+
+        return result
+
+# ============================
+# Asynchronous Helper Functions
+# ============================
+
+async def make_initial_searching_plan_async(session, user_query):
+    """
+    Ask the reasoning LLMs to produce a research plan based on the user’s query.
+    """
+    prompt = (
+        "You are an advanced reasoning LLM that specializes in structuring and refining research plans. Based on the given user query,"
+        "you will generate a comprehensive research plan that expands on the topic, identifies key areas of investigation, and breaks down"
+        " the research process into actionable steps for a search agent to execute.\n"
+        "Process:\n"
+        "Expand the Query: 1. Clarify and enrich the user’s query by considering related aspects, possible interpretations,"
+        "and necessary contextual details. 2.Identify any ambiguities and resolve them by assuming the most logical and useful framing of the problem.\n"
+        "Identify Key Research Areas: 1. Break down the expanded query into core themes, subtopics, or dimensions of investigation."
+        "2.Determine what information is necessary to provide a comprehensive answer.\n"
+        "Define Research Steps: 1. Outline a structured plan with clear steps that guide the search agent on how to gather information."
+        "2. Specify which sources or types of data are most relevant (e.g., academic papers, government reports, news sources, expert opinions)."
+        "3. Prioritize steps based on importance and logical sequence.\n"
+        "Suggest Search Strategies: 1.Recommend search terms, keywords, and boolean operators to optimize search efficiency."
+        "2. Identify useful databases, journals, and sources where high-quality information can be found."
+        "3. Suggest methodologies for verifying credibility and synthesizing findings.\n"
+        "NO EXPLANATIONS, write plans ONLY!\n"
+    )
+    messages = [
+        {"role": "system", "content": "You are an advanced reasoning LLM that guides a following search agent to search for relevant information for a research."},
+        {"role": "user", "content": f"User Query: {user_query}\n\n{prompt}"}
+    ]
+    response = await call_ollama_async(session, messages, model=REASON_MODEL)
+    if response:
+        try:
+            # Remove <think>...</think> tags and their content if they exist
+            cleaned_response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+            print(f"Plan:{cleaned_response}")
+            return cleaned_response
+        except Exception as e:
+            print(f"Error processing response: {e}")
+    return []
+
+async def judge_search_result_and_future_plan_aync(session, user_query, original_plan, context_combined):
+    """
+    Ask the reasoning LLMs to judge the result of the search attempt and produce a plan for next interation.
+    """
+    prompt = (
+    "You are an advanced reasoning LLM that specializes in evaluating research results and refining search strategies. "
+    "Your task is to analyze the search agent’s findings, assess their relevance and completeness, "
+    "and generate a structured plan for the next search iteration. Your goal is to ensure a thorough and efficient research process "
+    "that ultimately provides a comprehensive answer to the user’s query. But still, if you think everything is enough, you can tell search agent to stop\n"
+    "Process:\n"
+    "1. **Evaluate Search Results:**\n"
+    "   - Analyze the retrieved search results to determine their relevance, credibility, and completeness.\n"
+    "   - Identify missing information, knowledge gaps, or weak sources.\n"
+    "   - Assess whether the search results sufficiently address the key research areas from the original plan.\n"
+    "   - If everything is enough, tell search agent to stop with your reason\n"
+    "2. **Determine Next Steps:**\n"
+    "   - Based on gaps identified, refine or expand the research focus.\n"
+    "   - Suggest additional search directions or alternative sources to explore.\n"
+    "   - If necessary, propose adjustments to search strategies, including keyword modifications, new sources, or filtering techniques.\n"
+    "3. **Generate an Updated Research Plan:**\n"
+    "   - Provide a structured step-by-step plan for the next search iteration.\n"
+    "   - Clearly outline what aspects need further investigation and where the search agent should focus next.\n"
+    "NO EXPLANATIONS, write plans ONLY!\n"
+    "Now, based on the above information and instruction, evaluate the search results and generate a refined research plan for the next iteration."
+    )
+
+    messages = [
+        {"role": "system", "content": "You are an advanced reasoning LLM that guides a following search agent to search for relevant information for a research."},
+        {"role": "user", "content": f"User Query: {user_query}\n\n Original Research Plan: {original_plan} \n\nExtracted Relevant Contexts by the search agent:\n{context_combined} \n\n{prompt}"}
+    ]
+    response = await call_ollama_async(session, messages, model=REASON_MODEL)
+    if response:
+        try:
+            # Remove <think>...</think> tags and their content if they exist
+            cleaned_response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+            print(f"Next Plan:{cleaned_response}")
+            return cleaned_response
+        except Exception as e:
+            print(f"Error processing response: {e}")
+    return []
+
+async def generate_writing_plan_aync(session, user_query, aggregated_contexts):
+    """
+    Ask the reasoning LLM to generate a structured writing plan for the final report based on the aggregated research findings.
+    """
+    prompt = (
+        "You are an advanced reasoning LLM that specializes in structuring comprehensive research reports. "
+        "Your task is to analyze the aggregated research findings from previous searches and generate a structured plan "
+        "for writing the final report. The goal is to ensure that the report is well-organized, complete, and effectively presents the findings.\n\n"
+        "Process:\n"
+        "1. **Analyze Aggregated Findings:**\n"
+        "   - Review the provided research findings for relevance, accuracy, and coherence.\n"
+        "   - Identify key insights, supporting evidence, and significant conclusions.\n"
+        "   - Highlight any inconsistencies or areas that may need further clarification.\n\n"
+        "2. **Determine Report Structure:**\n"
+        "   - Define a clear outline with logical sections that effectively communicate the research results.\n"
+        "   - Ensure the structure follows a coherent flow, such as Introduction, Key Findings, Analysis, Conclusion, and References.\n"
+        "   - Specify where different pieces of evidence should be integrated within the report.\n\n"
+        "3. **Provide Writing Guidelines:**\n"
+        "   - Suggest the tone and style appropriate for the report (e.g., formal, analytical, concise).\n"
+        "   - Recommend how to synthesize multiple sources into a coherent narrative.\n"
+        "   - If any section lacks sufficient information, indicate where additional elaboration may be needed.\n\n"
+        "NO EXPLANATIONS, write plans ONLY!\n"
+        "Now, based on the above instructions, generate a structured plan for writing the final research report.\n"
+    )
+
+    messages = [
+        {"role": "system", "content": "You are an advanced reasoning LLM that structures research findings into a well-organized final report."},
+        {"role": "user", "content": f"User Query: {user_query}\n\nAggregated Research Findings:\n{aggregated_contexts}\n\n{prompt}"}
+    ]
+    response = await call_ollama_async(session, messages, model=REASON_MODEL)
+    if response:
+        try:
+            # Remove <think>...</think> tags and their content if they exist
+            cleaned_response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+            print(f"Writing Plan: {cleaned_response}")
+            return cleaned_response
+        except Exception as e:
+            print(f"Error processing response: {e}")
+    return []
+
+    
+async def generate_search_queries_async(session, query_plan):
+    """
+    Ask the LLM to produce up to four precise search queries (in Python list format)
+    based on the user’s query.
+    """
+    prompt = (
+        "You are an expert research assistant. Given the user's query, generate up to four distinct, "
+        "precise search queries that would help gather comprehensive information on the topic. "
+        "Return ONLY a Python list of strings, for example: ['query1', 'query2', 'query3']."
+    )
+    messages = [
+        {"role": "system", "content": "You are a helpful and precise research assistant."},
+        {"role": "user", "content": f"{query_plan}\n\n{prompt}"}
+    ]
+    response = await call_ollama_async(session, messages)
+    if response:
+        cleaned = response.strip()
+        
+        # Remove triple backticks and language specifier if present
+        cleaned = re.sub(r"```(?:\w+)?\n(.*?)\n```", r"\1", cleaned, flags=re.DOTALL).strip()
+
+        # First, try to directly evaluate the cleaned string
+        try:
+            new_queries = ast.literal_eval(cleaned)
+            if isinstance(new_queries, list):
+                return new_queries
+        except Exception as e:
+            # Direct evaluation failed; try to extract the list part from the string.
+            match = re.search(r'(\[.*\])', cleaned, re.DOTALL)
+            if match:
+                list_str = match.group(1)
+                try:
+                    new_queries = ast.literal_eval(list_str)
+                    if isinstance(new_queries, list):
+                        return new_queries
+                except Exception as e_inner:
+                    print("Error parsing extracted list:", e_inner, "\nExtracted text:", list_str)
+                    return []
+            print("Error parsing new search queries:", e, "\nResponse:", response)
+            return []
+    return []
+
+
+async def perform_search_async(session, query):
+    params = {
+        "q": query,
+        "format": "json"
+    }
+    try:
+        async with session.get(BASE_SEARXNG_URL, params=params) as resp:
+            if resp.status == 200:
+                results = await resp.json()
+                if "results" in results:
+                    # Extract the URLs from the returned results list.
+                    links = [item.get("url") for item in results["results"] if "url" in item]
+                    return links
+                else:
+                    print("No results in SearXNG response.")
+                    return []
+            else:
+                text = await resp.text()
+                print(f"SearXNG error: {resp.status} - {text}")
+                return []
+    except Exception as e:
+        print("Error performing SearXNG search:", e)
+        return []
+
+
+async def is_page_useful_async(session, user_query, page_text, page_url):
+    """
+    Ask the LLM if the provided webpage content is useful for answering the user's query.
+    The LLM must reply with exactly "Yes" or "No".
+    """
+    prompt = (
+        "You are a critical research evaluator. Given the user's query and the content of a webpage, "
+        "determine if the webpage contains information relevant and useful for addressing the query. "
+        "Respond with exactly one word: 'Yes' if the page is useful, or 'No' if it is not. Do not include any extra text."
+    )
+    messages = [
+        {"role": "system", "content": "You are a strict and concise evaluator of research relevance."},
+        {"role": "user", "content": f"User Query: {user_query}\n\nWeb URL: {page_url}\n\nWebpage Content (first 20000 characters):\n{page_text[:20000]}\n\n{prompt}"}
+    ]
+    response = await call_ollama_async(session, messages)
+    if response:
+        answer = response.strip()
+        if answer in ["Yes", "No"]:
+            return answer
+        else:
+            # Fallback: try to extract Yes/No from the response.
+            if "Yes" in answer:
+                return "Yes"
+            elif "No" in answer:
+                return "No"
+    return "No"
+
+
+async def extract_relevant_context_async(session, user_query, search_query, page_text, page_url):
+    """
+    Given the original query, the search query used, and the page content,
+    have the LLM extract all information relevant for answering the query.
+    """
+    prompt = (
+        "You are an expert information extractor. Given the user's query, the search query that led to this page, "
+        "and the webpage content, extract all pieces of information that are relevant to answering the user's query. "
+        "Return only the relevant context as plain text without commentary."
+    )
+    messages = [
+        {"role": "system", "content": "You are an expert in extracting and summarizing relevant information."},
+        {"role": "user", "content": f"User Query: {user_query}\nSearch Query: {search_query}\n\nWeb URL: {page_url}\n\nWebpage Content (first 20000 characters):\n{page_text[:20000]}\n\n{prompt}"}
+    ]
+    response = await call_ollama_async(session, messages)
+    if response:
+        return response.strip()
+    return ""
+
+
+async def get_new_search_queries_async(session, user_query, new_research_plan, previous_search_queries, all_contexts):
+    """
+    Based on the original query, the previously used search queries, and all the extracted contexts,
+    ask the LLM whether additional search queries are needed. If yes, return a Python list of up to four queries;
+    if the LLM thinks research is complete, it should return "<done>".
+    """
+    context_combined = "\n".join(all_contexts)
+    prompt = (
+        "You are an analytical research assistant. Based on the original query, the search queries performed so far, "
+        "the next step plan by a planning agent and the extracted contexts from webpages, determine if further research is needed. "
+        "If further research is needed, ONLY provide up to four new search queries as a Python list IN ONE LINE (for example, "
+        "['new query1', 'new query2']) in PLAIN text, NEVER wrap in code env. If you believe no further research is needed, respond with exactly <done>."
+        "\nREMEMBER: Output ONLY a Python list or the token <done> WITHOUT any additional text or explanations."
+    )
+    messages = [
+        {"role": "system", "content": "You are a systematic research planner."},
+        {"role": "user", "content": f"User Query: {user_query}\nPrevious Search Queries: {previous_search_queries}\n\nExtracted Relevant Contexts:\n{context_combined}"+(f"\n\nNext Research Plan by planning agent:\n{new_research_plan}" if new_research_plan else "")+f"\n\n{prompt}"}
+    ]
+    response = await call_ollama_async(session, messages)
+    if response:
+        cleaned = response.strip()
+        if cleaned == "<done>":
+            return "<done>"
+        # Remove triple backticks and language specifier if present
+        cleaned = re.sub(r"```(?:\w+)?\n(.*?)\n```", r"\1", cleaned, flags=re.DOTALL).strip()
+        # First, try to directly evaluate the cleaned string
+        try:
+            new_queries = ast.literal_eval(cleaned)
+            if isinstance(new_queries, list):
+                return new_queries
+        except Exception as e:
+            # Direct evaluation failed; try to extract the list part from the string.
+            match = re.search(r'(\[.*\])', cleaned, re.DOTALL)
+            if match:
+                list_str = match.group(1)
+                try:
+                    new_queries = ast.literal_eval(list_str)
+                    if isinstance(new_queries, list):
+                        return new_queries
+                except Exception as e_inner:
+                    print("Error parsing extracted list:", e_inner, "\nExtracted text:", list_str)
+                    return []
+            print("Error parsing new search queries:", e, "\nResponse:", response)
+            return []
+    return []
+
+
+
+async def generate_final_report_async(session, user_query, report_planning, all_contexts):
+    """
+    Generate the final comprehensive report using all gathered contexts.
+    """
+    context_combined = "\n".join(all_contexts)
+    prompt = (
+        "You are an expert researcher and report writer. Based on the gathered contexts below and the original query, "
+        "write a comprehensive, well-structured, and detailed report that addresses the query thoroughly. "
+        "Include all relevant insights and conclusions without extraneous commentary."
+        "Math equations should use proper LaTeX syntax in markdown format, with $\\LaTeX{}$ for inline, $$\\LaTeX{}$$ for block."
+        "Properly cite all the sources inline from 'Gathered Relevant Contexts' with [cite_number],"
+        "and a corresponding bibliography list with their urls in markdown format in the end."
+    )
+    messages = [
+        {"role": "system", "content": "You are a skilled report writer."},
+        {"role": "user", "content": f"User Query: {user_query}\n\nGathered Relevant Contexts:\n{context_combined}" + (f"\n\nWriting plan from a planning agent:\n{report_planning}" if report_planning else "") + f"\n\nWriting Instructions:{prompt}"}
+    ]
+    report = await call_ollama_async(session, messages)
+    return report
+
+
+async def process_link(session, link, user_query, search_query):
+    """
+    Process a single link: fetch its content, judge its usefulness, and if useful, extract the relevant context.
+    """
+    print(f"Fetching content from: {link}")
+    page_text = await fetch_webpage_text_async(session, link)
+    if not page_text:
+        return None
+    usefulness = await is_page_useful_async(session, user_query, page_text, link)
+    print(f"Page usefulness for {link}: {usefulness}")
+    if usefulness == "Yes":
+        context = await extract_relevant_context_async(session, user_query, search_query, page_text, link)
+        if context:
+            print(f"Extracted context from {link} (first 200 chars): {context[:200]}")
+            context="url:"+link+"\ncontext:"+context
+            return context
+    return None
+
+
+# =========================
+# Main Asynchronous Routine
+# =========================
+
+async def async_main(user_query: str, max_iterations: int = 10, max_search_items: int = 4, stream: bool = False):
+    """Modified async_main to work with API parameters and support streaming"""
+    iteration_limit = max_iterations
+    aggregated_contexts = []
+    all_search_queries = []
+    iteration = 0
+    final_result = None  # For storing the final report in non-streaming mode
+    
+    async def generate_stream():
+        nonlocal iteration, aggregated_contexts, all_search_queries
+        
+        def create_chunk(content: str) -> str:
+            chunk = ChatCompletionChunk(
+                id=f"chatcmpl-{int(time.time()*1000)}",
+                created=int(time.time()),
+                model="deep_researcher",
+                choices=[{
+                    "index": 0,
+                    "delta": {"content": content},
+                    "finish_reason": None
+                }]
+            )
+            return f"data: {chunk.json()}\n\n"
+
+        async with aiohttp.ClientSession() as session:
+            if WITH_PLANNING:
+                reseach_plan = await make_initial_searching_plan_async(session, user_query)
+                if stream:
+                    yield create_chunk(f"Initial Research Plan:\n{reseach_plan}\n\n")
+                initial_query = "User Query:" + user_query + "\n\nResaerch Plan:" + reseach_plan
+            else:
+                initial_query = "User Query:" + user_query
+
+            new_search_queries = await generate_search_queries_async(session, initial_query)
+            if not new_search_queries:
+                if stream:
+                    yield create_chunk("No search queries were generated. Exiting.\n")
+                return
+            all_search_queries.extend(new_search_queries)
+
+            while iteration < iteration_limit:
+                if stream:
+                    yield create_chunk(f"\n=== Iteration {iteration + 1} ===\n")
+                
+                iteration_contexts = []
+                search_tasks = [asyncio.create_task(perform_search_async(session, query)) for query in new_search_queries]
+                full_search_results = await asyncio.gather(*search_tasks)
+                
+                if not USE_JINA:
+                    search_results = [result[:max_search_items] for result in full_search_results]
+                else:
+                    search_results = full_search_results
+
+                unique_links = {}
+                for idx, links in enumerate(search_results):
+                    query = new_search_queries[idx]
+                    for link in links:
+                        if link not in unique_links:
+                            unique_links[link] = query
+
+                if stream:
+                    yield create_chunk(f"Processing {len(unique_links)} unique links...\n")
+
+                link_tasks = [
+                    process_link(session, link, user_query, unique_links[link])
+                    for link in unique_links
+                ]
+                link_results = await asyncio.gather(*link_tasks)
+
+                for res in link_results:
+                    if res:
+                        iteration_contexts.append(res)
+
+                if iteration_contexts:
+                    aggregated_contexts.extend(iteration_contexts)
+                elif stream:
+                    yield create_chunk("No useful contexts found in this iteration.\n")
+
+                if iteration + 1 < iteration_limit:
+                    if WITH_PLANNING:
+                        new_research_plan = await judge_search_result_and_future_plan_aync(session, user_query, reseach_plan, aggregated_contexts)
+                        if stream:
+                            yield create_chunk(f"Updated Research Plan:\n{new_research_plan}\n\n")
+                    else:
+                        new_research_plan = None
+
+                    new_search_queries = await get_new_search_queries_async(session, user_query, new_research_plan, all_search_queries, aggregated_contexts)
+                    if new_search_queries == "<done>":
+                        if stream:
+                            yield create_chunk("Research complete. Generating final report...\n")
+                        break
+                    elif new_search_queries:
+                        if stream:
+                            yield create_chunk(f"New search queries generated: {new_search_queries}\n")
+                        all_search_queries.extend(new_search_queries)
+                    else:
+                        if stream:
+                            yield create_chunk("No new search queries. Completing research...\n")
+                        break
+
+                iteration += 1
+
+            if stream:
+                yield create_chunk("\nGenerating final report...\n")
+
+            if WITH_PLANNING:
+                final_report_planning = await generate_writing_plan_aync(session, user_query, aggregated_contexts)
+                if stream and final_report_planning:
+                    yield create_chunk(f"Writing Plan:\n{final_report_planning}\n\n")
+            else:
+                final_report_planning = None
+
+            final_report = await generate_final_report_async(session, user_query, final_report_planning, aggregated_contexts)
+            
+            if stream:
+                yield create_chunk(final_report)
+                yield "data: [DONE]\n\n"
+            else:
+                nonlocal final_result
+                final_result = final_report
+
+    if stream:
+        return generate_stream()
+    else:
+        # For non-streaming, run the generator to completion and return the final result
+        async for _ in generate_stream():
+            pass
+        return final_result
+
+@app.post("/v1/chat/completions")
+async def chat_completions(request: ChatCompletionRequest):
+    # Validate model
+    if request.model != "deep_researcher":
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": "Only 'deep_researcher' model is supported"}}
+        )
+
+    # Get the last user message
+    last_message = next((msg for msg in reversed(request.messages) if msg.role == "user"), None)
+    if not last_message:
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": "No user message found"}}
+        )
+
+    if request.stream:
+        return StreamingResponse(
+            async_main(
+                last_message.content,
+                max_iterations=request.max_iterations,
+                max_search_items=request.max_search_items,
+                stream=True
+            ),
+            media_type="text/event-stream"
+        )
+    else:
+        final_report = await async_main(
+            last_message.content,
+            max_iterations=request.max_iterations,
+            max_search_items=request.max_search_items,
+            stream=False
+        )
+        
+        return ChatCompletionResponse(
+            id=f"chatcmpl-{int(time.time()*1000)}",
+            created=int(time.time()),
+            model="deep_researcher",
+            choices=[
+                ChatCompletionChoice(
+                    index=0,
+                    message=Message(role="assistant", content=final_report),
+                    finish_reason="stop"
+                )
+            ]
+        )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
