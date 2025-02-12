@@ -25,12 +25,24 @@ class Message(BaseModel):
     role: str
     content: str
 
+class ModelObject(BaseModel):
+    id: str
+    object: str = "model"
+    created: int
+    owned_by: str
+
+class ModelList(BaseModel):
+    object: str = "list"
+    data: List[ModelObject]
+
 class ChatCompletionRequest(BaseModel):
     model: str = Field(default="deep_researcher")
     messages: List[Message]
     stream: bool = False
     max_iterations: Optional[int] = Field(default=10, ge=1, le=50)
     max_search_items: Optional[int] = Field(default=4, ge=1, le=20)
+    default_model: Optional[str] = Field(default=None, description="Override the default model from config")
+    reason_model: Optional[str] = Field(default=None, description="Override the reason model from config")
 
 class ChatCompletionChoice(BaseModel):
     index: int
@@ -817,7 +829,6 @@ async def stream_research(system_instruction: str, user_query: str, max_iteratio
                         if result.startswith("url:"):
                             iteration_contexts.append(result)
                         else:
-                            # This is a status message, already wrapped in create_chunk
                             yield result
 
             if iteration_contexts:
@@ -861,12 +872,28 @@ async def stream_research(system_instruction: str, user_query: str, max_iteratio
         yield create_chunk(final_report)
         yield "data: [DONE]\n\n"
 
-async def async_main(system_instruction: str,user_query: str, max_iterations: int = 10, max_search_items: int = 4, stream: bool = False):
+async def async_main(system_instruction: str, user_query: str, max_iterations: int = 10, max_search_items: int = 4,
+                    stream: bool = False, default_model: Optional[str] = None, reason_model: Optional[str] = None):
     """Main entry point that handles both streaming and non-streaming modes"""
-    if stream:
-        return stream_research(system_instruction, user_query, max_iterations, max_search_items)
-    else:
-        return await process_research(system_instruction, user_query, max_iterations, max_search_items)
+    # Override config models if provided
+    global DEFAULT_MODEL, REASON_MODEL
+    temp_default_model = DEFAULT_MODEL
+    temp_reason_model = REASON_MODEL
+    
+    if default_model:
+        DEFAULT_MODEL = default_model
+    if reason_model:
+        REASON_MODEL = reason_model
+        
+    try:
+        if stream:
+            return stream_research(system_instruction, user_query, max_iterations, max_search_items)
+        else:
+            return await process_research(system_instruction, user_query, max_iterations, max_search_items)
+    finally:
+        # Restore original config values
+        DEFAULT_MODEL = temp_default_model
+        REASON_MODEL = temp_reason_model
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
@@ -876,6 +903,18 @@ async def chat_completions(request: ChatCompletionRequest):
             status_code=400,
             content={"error": {"message": "Only 'deep_researcher' model is supported"}}
         )
+
+    # Check for Chrome session when not using Jina
+    if not USE_JINA:
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.connect_over_cdp(f"http://localhost:{CHROME_PORT}")
+                await browser.close()
+        except Exception as e:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"message": "Not using Jina but no Chrome session connected"}}
+            )
 
     # Get the last user message
     last_message = next((msg for msg in reversed(request.messages) if msg.role == "user"), None)
@@ -897,7 +936,9 @@ async def chat_completions(request: ChatCompletionRequest):
             last_message.content,
             max_iterations=request.max_iterations,
             max_search_items=request.max_search_items,
-            stream=True
+            stream=True,
+            default_model=request.default_model,
+            reason_model=request.reason_model
         )
         return StreamingResponse(
             generator,
@@ -909,7 +950,9 @@ async def chat_completions(request: ChatCompletionRequest):
             last_message.content,
             max_iterations=request.max_iterations,
             max_search_items=request.max_search_items,
-            stream=False
+            stream=False,
+            default_model=request.default_model,
+            reason_model=request.reason_model
         )
         
         return ChatCompletionResponse(
@@ -924,6 +967,19 @@ async def chat_completions(request: ChatCompletionRequest):
                 )
             ]
         )
+
+@app.get("/v1/models")
+async def list_models():
+    """List the available models"""
+    return ModelList(
+        data=[
+            ModelObject(
+                id="deep_researcher",
+                created=int(time.time()),
+                owned_by="deep_researcher"
+            )
+        ]
+    )
 
 if __name__ == "__main__":
     import uvicorn
