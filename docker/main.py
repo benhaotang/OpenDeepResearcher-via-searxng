@@ -74,6 +74,7 @@ OPENROUTER_URL = config.get('API', 'openrouter_url')
 JINA_BASE_URL = config.get('API', 'jina_base_url')
 BASE_SEARXNG_URL = config.get('API', 'searxng_url')
 
+USE_OLLAMA = config.getboolean('Settings', 'use_ollama')
 USE_JINA = config.getboolean('Settings', 'use_jina')
 WITH_PLANNING = config.getboolean('Settings', 'with_planning')
 DEFAULT_MODEL = config.get('Settings', 'default_model')
@@ -357,7 +358,7 @@ async def make_initial_searching_plan_async(session, user_query):
         {"role": "system", "content": "You are an advanced reasoning LLM that guides a following search agent to search for relevant information for a research."},
         {"role": "user", "content": f"User Query: {user_query}\n\n{prompt}"}
     ]
-    response = await call_ollama_async(session, messages, model=REASON_MODEL)
+    response = await (call_ollama_async(session, messages, model=REASON_MODEL) if USE_OLLAMA else call_openrouter_async(session, messages, model=REASON_MODEL))
     if response:
         try:
             # Remove <think>...</think> tags and their content if they exist
@@ -398,7 +399,7 @@ async def judge_search_result_and_future_plan_aync(session, user_query, original
         {"role": "system", "content": "You are an advanced reasoning LLM that guides a following search agent to search for relevant information for a research."},
         {"role": "user", "content": f"User Query: {user_query}\n\n Original Research Plan: {original_plan} \n\nExtracted Relevant Contexts by the search agent:\n{context_combined} \n\n{prompt}"}
     ]
-    response = await call_ollama_async(session, messages, model=REASON_MODEL)
+    response = await (call_ollama_async(session, messages, model=REASON_MODEL) if USE_OLLAMA else call_openrouter_async(session, messages, model=REASON_MODEL))
     if response:
         try:
             # Remove <think>...</think> tags and their content if they exist
@@ -438,7 +439,7 @@ async def generate_writing_plan_aync(session, user_query, aggregated_contexts):
         {"role": "system", "content": "You are an advanced reasoning LLM that structures research findings into a well-organized final report."},
         {"role": "user", "content": f"User Query: {user_query}\n\nAggregated Research Findings:\n{aggregated_contexts}\n\n{prompt}"}
     ]
-    response = await call_ollama_async(session, messages, model=REASON_MODEL)
+    response = await (call_ollama_async(session, messages, model=REASON_MODEL) if USE_OLLAMA else call_openrouter_async(session, messages, model=REASON_MODEL))
     if response:
         try:
             # Remove <think>...</think> tags and their content if they exist
@@ -464,7 +465,7 @@ async def generate_search_queries_async(session, query_plan):
         {"role": "system", "content": "You are a helpful and precise research assistant."},
         {"role": "user", "content": f"{query_plan}\n\n{prompt}"}
     ]
-    response = await call_ollama_async(session, messages)
+    response = await (call_ollama_async(session, messages) if USE_OLLAMA else call_openrouter_async(session, messages))
     if response:
         cleaned = response.strip()
         
@@ -532,7 +533,7 @@ async def is_page_useful_async(session, user_query, page_text, page_url):
         {"role": "system", "content": "You are a strict and concise evaluator of research relevance."},
         {"role": "user", "content": f"User Query: {user_query}\n\nWeb URL: {page_url}\n\nWebpage Content (first 20000 characters):\n{page_text[:20000]}\n\n{prompt}"}
     ]
-    response = await call_ollama_async(session, messages)
+    response = await (call_ollama_async(session, messages) if USE_OLLAMA else call_openrouter_async(session, messages))
     if response:
         answer = response.strip()
         if answer in ["Yes", "No"]:
@@ -560,7 +561,7 @@ async def extract_relevant_context_async(session, user_query, search_query, page
         {"role": "system", "content": "You are an expert in extracting and summarizing relevant information."},
         {"role": "user", "content": f"User Query: {user_query}\nSearch Query: {search_query}\n\nWeb URL: {page_url}\n\nWebpage Content (first 20000 characters):\n{page_text[:20000]}\n\n{prompt}"}
     ]
-    response = await call_ollama_async(session, messages)
+    response = await (call_ollama_async(session, messages) if USE_OLLAMA else call_openrouter_async(session, messages))
     if response:
         return response.strip()
     return ""
@@ -584,7 +585,7 @@ async def get_new_search_queries_async(session, user_query, new_research_plan, p
         {"role": "system", "content": "You are a systematic research planner."},
         {"role": "user", "content": f"User Query: {user_query}\nPrevious Search Queries: {previous_search_queries}\n\nExtracted Relevant Contexts:\n{context_combined}"+(f"\n\nNext Research Plan by planning agent:\n{new_research_plan}" if new_research_plan else "")+f"\n\n{prompt}"}
     ]
-    response = await call_ollama_async(session, messages)
+    response = await (call_ollama_async(session, messages) if USE_OLLAMA else call_openrouter_async(session, messages))
     if response:
         cleaned = response.strip()
         if cleaned == "<done>":
@@ -625,167 +626,246 @@ async def generate_final_report_async(session, user_query, report_planning, all_
         "Include all relevant insights and conclusions without extraneous commentary."
         "Math equations should use proper LaTeX syntax in markdown format, with $\\LaTeX{}$ for inline, $$\\LaTeX{}$$ for block."
         "Properly cite all the sources inline from 'Gathered Relevant Contexts' with [cite_number],"
-        "and a corresponding bibliography list with their urls in markdown format in the end."
+        "and add a corresponding bibliography list with their urls in markdown format in the end of your report."
     )
     messages = [
         {"role": "system", "content": "You are a skilled report writer."},
         {"role": "user", "content": f"User Query: {user_query}\n\nGathered Relevant Contexts:\n{context_combined}" + (f"\n\nWriting plan from a planning agent:\n{report_planning}" if report_planning else "") + f"\n\nWriting Instructions:{prompt}"}
     ]
-    report = await call_ollama_async(session, messages)
+    report = await (call_ollama_async(session, messages) if USE_OLLAMA else call_openrouter_async(session, messages))
     return report
 
-
-async def process_link(session, link, user_query, search_query):
+async def process_link(session, link, user_query, search_query, create_chunk=None):
     """
     Process a single link: fetch its content, judge its usefulness, and if useful, extract the relevant context.
     """
-    print(f"Fetching content from: {link}")
+    status_msg = f"Fetching content from: {link}\n\n"
+    if create_chunk:
+        yield create_chunk(status_msg)
+    else:
+        print(status_msg)
+
     page_text = await fetch_webpage_text_async(session, link)
     if not page_text:
-        return None
+        return
+
     usefulness = await is_page_useful_async(session, user_query, page_text, link)
-    print(f"Page usefulness for {link}: {usefulness}")
+    status_msg = f"Page usefulness for {link}: {usefulness}\n\n"
+    if create_chunk:
+        yield create_chunk(status_msg)
+    else:
+        print(status_msg)
+
     if usefulness == "Yes":
         context = await extract_relevant_context_async(session, user_query, search_query, page_text, link)
         if context:
-            print(f"Extracted context from {link} (first 200 chars): {context[:200]}")
+            status_msg = f"Extracted context from {link} (first 200 chars): {context[:200]}\n\n"
+            if create_chunk:
+                yield create_chunk(status_msg)
+            else:
+                print(status_msg)
             context="url:"+link+"\ncontext:"+context
-            return context
-    return None
+            yield context
+    return
 
 
 # =========================
 # Main Asynchronous Routine
 # =========================
 
-async def async_main(user_query: str, max_iterations: int = 10, max_search_items: int = 4, stream: bool = False):
-    """Modified async_main to work with API parameters and support streaming"""
+async def process_research(user_query: str, max_iterations: int = 10, max_search_items: int = 4):
+    """Core research processing function that returns the final report"""
     iteration_limit = max_iterations
     aggregated_contexts = []
     all_search_queries = []
     iteration = 0
-    final_result = None  # For storing the final report in non-streaming mode
-    
-    async def generate_stream():
-        nonlocal iteration, aggregated_contexts, all_search_queries
-        
-        def create_chunk(content: str) -> str:
-            chunk = ChatCompletionChunk(
-                id=f"chatcmpl-{int(time.time()*1000)}",
-                created=int(time.time()),
-                model="deep_researcher",
-                choices=[{
-                    "index": 0,
-                    "delta": {"content": content},
-                    "finish_reason": None
-                }]
-            )
-            return f"data: {chunk.json()}\n\n"
 
-        async with aiohttp.ClientSession() as session:
-            if WITH_PLANNING:
-                reseach_plan = await make_initial_searching_plan_async(session, user_query)
-                if stream:
-                    yield create_chunk(f"Initial Research Plan:\n{reseach_plan}\n\n")
-                initial_query = "User Query:" + user_query + "\n\nResaerch Plan:" + reseach_plan
-            else:
-                initial_query = "User Query:" + user_query
+    async with aiohttp.ClientSession() as session:
+        # Initial research plan
+        if WITH_PLANNING:
+            research_plan = await make_initial_searching_plan_async(session, user_query)
+            if isinstance(research_plan, list):
+                research_plan = ""
+            initial_query = "User Query:" + user_query + "\n\nResearch Plan:" + str(research_plan)
+        else:
+            research_plan = None
+            initial_query = "User Query:" + user_query
 
-            new_search_queries = await generate_search_queries_async(session, initial_query)
-            if not new_search_queries:
-                if stream:
-                    yield create_chunk("No search queries were generated. Exiting.\n")
-                return
-            all_search_queries.extend(new_search_queries)
+        # Generate initial search queries
+        new_search_queries = await generate_search_queries_async(session, initial_query)
+        if not new_search_queries:
+            return "No search queries could be generated."
+        all_search_queries.extend(new_search_queries)
 
-            while iteration < iteration_limit:
-                if stream:
-                    yield create_chunk(f"\n=== Iteration {iteration + 1} ===\n")
-                
-                iteration_contexts = []
-                search_tasks = [asyncio.create_task(perform_search_async(session, query)) for query in new_search_queries]
-                full_search_results = await asyncio.gather(*search_tasks)
-                
-                if not USE_JINA:
-                    search_results = [result[:max_search_items] for result in full_search_results]
-                else:
-                    search_results = full_search_results
-
-                unique_links = {}
-                for idx, links in enumerate(search_results):
-                    query = new_search_queries[idx]
-                    for link in links:
-                        if link not in unique_links:
-                            unique_links[link] = query
-
-                if stream:
-                    yield create_chunk(f"Processing {len(unique_links)} unique links...\n")
-
-                link_tasks = [
-                    process_link(session, link, user_query, unique_links[link])
-                    for link in unique_links
-                ]
-                link_results = await asyncio.gather(*link_tasks)
-
-                for res in link_results:
-                    if res:
-                        iteration_contexts.append(res)
-
-                if iteration_contexts:
-                    aggregated_contexts.extend(iteration_contexts)
-                elif stream:
-                    yield create_chunk("No useful contexts found in this iteration.\n")
-
-                if iteration + 1 < iteration_limit:
-                    if WITH_PLANNING:
-                        new_research_plan = await judge_search_result_and_future_plan_aync(session, user_query, reseach_plan, aggregated_contexts)
-                        if stream:
-                            yield create_chunk(f"Updated Research Plan:\n{new_research_plan}\n\n")
-                    else:
-                        new_research_plan = None
-
-                    new_search_queries = await get_new_search_queries_async(session, user_query, new_research_plan, all_search_queries, aggregated_contexts)
-                    if new_search_queries == "<done>":
-                        if stream:
-                            yield create_chunk("Research complete. Generating final report...\n")
-                        break
-                    elif new_search_queries:
-                        if stream:
-                            yield create_chunk(f"New search queries generated: {new_search_queries}\n")
-                        all_search_queries.extend(new_search_queries)
-                    else:
-                        if stream:
-                            yield create_chunk("No new search queries. Completing research...\n")
-                        break
-
-                iteration += 1
-
-            if stream:
-                yield create_chunk("\nGenerating final report...\n")
-
-            if WITH_PLANNING:
-                final_report_planning = await generate_writing_plan_aync(session, user_query, aggregated_contexts)
-                if stream and final_report_planning:
-                    yield create_chunk(f"Writing Plan:\n{final_report_planning}\n\n")
-            else:
-                final_report_planning = None
-
-            final_report = await generate_final_report_async(session, user_query, final_report_planning, aggregated_contexts)
+        # Main research loop
+        while iteration < iteration_limit:
+            # Perform searches
+            iteration_contexts = []
+            search_tasks = [asyncio.create_task(perform_search_async(session, query)) for query in new_search_queries]
+            full_search_results = await asyncio.gather(*search_tasks)
             
-            if stream:
-                yield create_chunk(final_report)
-                yield "data: [DONE]\n\n"
-            else:
-                nonlocal final_result
-                final_result = final_report
+            search_results = [result[:max_search_items] for result in full_search_results] if not USE_JINA else full_search_results
 
+            # Process unique links
+            unique_links = {}
+            for idx, links in enumerate(search_results):
+                query = new_search_queries[idx]
+                for link in links:
+                    if link not in unique_links:
+                        unique_links[link] = query
+
+            # Process links
+            for link in unique_links:
+                async for result in process_link(session, link, user_query, unique_links[link]):
+                    if isinstance(result, str):
+                        if result.startswith("url:"):
+                            iteration_contexts.append(result)
+
+            if iteration_contexts:
+                aggregated_contexts.extend(iteration_contexts)
+
+            # Check if we should continue
+            if iteration + 1 < iteration_limit:
+                if WITH_PLANNING:
+                    new_research_plan = await judge_search_result_and_future_plan_aync(session, user_query, research_plan, aggregated_contexts)
+                else:
+                    new_research_plan = None
+
+                new_search_queries = await get_new_search_queries_async(session, user_query, new_research_plan, all_search_queries, aggregated_contexts)
+                if new_search_queries == "<done>" or not new_search_queries:
+                    break
+                all_search_queries.extend(new_search_queries)
+
+            iteration += 1
+
+        # Generate final report
+        if WITH_PLANNING:
+            final_report_planning = await generate_writing_plan_aync(session, user_query, aggregated_contexts)
+        else:
+            final_report_planning = None
+
+        return await generate_final_report_async(session, user_query, final_report_planning, aggregated_contexts)
+
+async def stream_research(user_query: str, max_iterations: int = 10, max_search_items: int = 4):
+    """Generator function for streaming research results"""
+    def create_chunk(content: str) -> str:
+        chunk = ChatCompletionChunk(
+            id=f"chatcmpl-{int(time.time()*1000)}",
+            created=int(time.time()),
+            model="deep_researcher",
+            choices=[{
+                "index": 0,
+                "delta": {"content": content},
+                "finish_reason": None
+            }]
+        )
+        return f"data: {chunk.json()}\n\n"
+
+    async with aiohttp.ClientSession() as session:
+        yield create_chunk("\n<think>\n\n")
+        # Initial research plan
+        if WITH_PLANNING:
+            research_plan = await make_initial_searching_plan_async(session, user_query)
+            if isinstance(research_plan, list):
+                research_plan = ""
+            if research_plan:
+                yield create_chunk(f"Initial Research Plan:\n{research_plan}\n\n")
+            initial_query = "User Query:" + user_query + "\n\nResearch Plan:" + str(research_plan)
+        else:
+            research_plan = None
+            initial_query = "User Query:" + user_query
+
+        # Generate initial search queries
+        new_search_queries = await generate_search_queries_async(session, initial_query)
+        if not new_search_queries:
+            yield create_chunk("No search queries were generated. Exiting.\n\n")
+            yield "data: [DONE]\n\n"
+            return
+
+        iteration_limit = max_iterations
+        aggregated_contexts = []
+        all_search_queries = []
+        iteration = 0
+        all_search_queries.extend(new_search_queries)
+
+        # Main research loop
+        while iteration < iteration_limit:
+            yield create_chunk(f"\n=== Iteration {iteration + 1} ===\n\n")
+            
+            # Perform searches
+            iteration_contexts = []
+            search_tasks = [asyncio.create_task(perform_search_async(session, query)) for query in new_search_queries]
+            full_search_results = await asyncio.gather(*search_tasks)
+            
+            search_results = [result[:max_search_items] for result in full_search_results] if not USE_JINA else full_search_results
+
+            # Process unique links
+            unique_links = {}
+            for idx, links in enumerate(search_results):
+                query = new_search_queries[idx]
+                for link in links:
+                    if link not in unique_links:
+                        unique_links[link] = query
+
+            yield create_chunk(f"Processing {len(unique_links)} unique links...\n\n")
+
+            # Process links
+            for link in unique_links:
+                async for result in process_link(session, link, user_query, unique_links[link], create_chunk):
+                    if isinstance(result, str):
+                        if result.startswith("url:"):
+                            iteration_contexts.append(result)
+                        else:
+                            # This is a status message, already wrapped in create_chunk
+                            yield result
+
+            if iteration_contexts:
+                aggregated_contexts.extend(iteration_contexts)
+            else:
+                yield create_chunk("No useful contexts found in this iteration.\n\n")
+
+            # Check if we should continue
+            if iteration + 1 < iteration_limit:
+                if WITH_PLANNING:
+                    new_research_plan = await judge_search_result_and_future_plan_aync(session, user_query, research_plan, aggregated_contexts)
+                    yield create_chunk(f"Updated Research Plan:\n{new_research_plan}\n\n")
+                else:
+                    new_research_plan = None
+
+                new_search_queries = await get_new_search_queries_async(session, user_query, new_research_plan, all_search_queries, aggregated_contexts)
+                if new_search_queries == "<done>":
+                    yield create_chunk("Research complete. Generating final report...\n\n")
+                    break
+                elif new_search_queries:
+                    yield create_chunk(f"New search queries generated: {new_search_queries}\n")
+                    all_search_queries.extend(new_search_queries)
+                else:
+                    yield create_chunk("No new search queries. Completing research...\n\n")
+                    break
+
+            iteration += 1
+
+        yield create_chunk("\nGenerating final report...\n\n")
+
+        # Generate final report
+        if WITH_PLANNING:
+            final_report_planning = await generate_writing_plan_aync(session, user_query, aggregated_contexts)
+            if final_report_planning:
+                yield create_chunk(f"Writing Plan:\n{final_report_planning}\n\n")
+        else:
+            final_report_planning = None
+
+        yield create_chunk("\n</think>\n\n")
+        final_report = await generate_final_report_async(session, user_query, final_report_planning, aggregated_contexts)
+        yield create_chunk(final_report)
+        yield "data: [DONE]\n\n"
+
+async def async_main(user_query: str, max_iterations: int = 10, max_search_items: int = 4, stream: bool = False):
+    """Main entry point that handles both streaming and non-streaming modes"""
     if stream:
-        return generate_stream()
+        return stream_research(user_query, max_iterations, max_search_items)
     else:
-        # For non-streaming, run the generator to completion and return the final result
-        async for _ in generate_stream():
-            pass
-        return final_result
+        return await process_research(user_query, max_iterations, max_search_items)
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
@@ -805,13 +885,15 @@ async def chat_completions(request: ChatCompletionRequest):
         )
 
     if request.stream:
+        # Get the async generator from async_main
+        generator = await async_main(
+            last_message.content,
+            max_iterations=request.max_iterations,
+            max_search_items=request.max_search_items,
+            stream=True
+        )
         return StreamingResponse(
-            async_main(
-                last_message.content,
-                max_iterations=request.max_iterations,
-                max_search_items=request.max_search_items,
-                stream=True
-            ),
+            generator,
             media_type="text/event-stream"
         )
     else:
