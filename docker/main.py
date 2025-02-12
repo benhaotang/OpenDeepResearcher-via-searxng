@@ -68,9 +68,9 @@ OLLAMA_BASE_URL = config.get('LocalAI', 'ollama_base_url')
 # ---------------------------
 # Configuration Constants
 # ---------------------------
-OPENROUTER_API_KEY = config.get('API', 'openrouter_api_key')
+OPENAI_COMPAT_API_KEY = config.get('API', 'openai_compat_api_key')
 JINA_API_KEY = config.get('API', 'jina_api_key')
-OPENROUTER_URL = config.get('API', 'openrouter_url')
+OPENAI_URL = config.get('API', 'openai_url')
 JINA_BASE_URL = config.get('API', 'jina_base_url')
 BASE_SEARXNG_URL = config.get('API', 'searxng_url')
 
@@ -100,17 +100,18 @@ PDF_MAX_FILESIZE = config.getint('Parsing', 'pdf_max_filesize')
 TIMEOUT_PDF = config.getint('Parsing', 'timeout_pdf')
 MAX_HTML_LENGTH = config.getint('Parsing', 'max_html_length')
 MAX_EVAL_TIME = config.getint('Parsing', 'max_eval_time')
+VERBOSE_WEB_PARSE = config.getboolean('Parsing', 'verbose_web_parse_detail')
 
 # ----------------------
 # Openrouter
 # ----------------------
 async def call_openrouter_async(session, messages, model=DEFAULT_MODEL):
     """
-    Asynchronously call the OpenRouter chat completion API with the provided messages.
+    Asynchronously call the OpenRouter/OpenAI compatible chat completion API with the provided messages.
     Returns the content of the assistant’s reply.
     """
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {OPENAI_COMPAT_API_KEY}",
         "X-Title": "OpenDeepResearcher, by Matt Shumer and Benhao Tang",
         "Content-Type": "application/json"
     }
@@ -119,17 +120,17 @@ async def call_openrouter_async(session, messages, model=DEFAULT_MODEL):
         "messages": messages
     }
     try:
-        async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
+        async with session.post(OPENAI_URL, headers=headers, json=payload) as resp:
             if resp.status == 200:
                 result = await resp.json()
                 try:
                     return result['choices'][0]['message']['content']
                 except (KeyError, IndexError) as e:
-                    print("Unexpected OpenRouter response structure:", result)
+                    print("Unexpected OpenRouter/OpenAI compatible response structure:", result)
                     return None
             else:
                 text = await resp.text()
-                print(f"OpenRouter API error: {resp.status} - {text}")
+                print(f"OpenRouter/OpenAI compatible API error: {resp.status} - {text}")
                 return None
     except Exception as e:
         print("Error calling OpenRouter:", e)
@@ -615,7 +616,7 @@ async def get_new_search_queries_async(session, user_query, new_research_plan, p
 
 
 
-async def generate_final_report_async(session, user_query, report_planning, all_contexts):
+async def generate_final_report_async(session, system_instruction, user_query, report_planning, all_contexts):
     """
     Generate the final comprehensive report using all gathered contexts.
     """
@@ -624,12 +625,12 @@ async def generate_final_report_async(session, user_query, report_planning, all_
         "You are an expert researcher and report writer. Based on the gathered contexts below and the original query, "
         "write a comprehensive, well-structured, and detailed report that addresses the query thoroughly. "
         "Include all relevant insights and conclusions without extraneous commentary."
-        "Math equations should use proper LaTeX syntax in markdown format, with $\\LaTeX{}$ for inline, $$\\LaTeX{}$$ for block."
+        "Math equations should use proper LaTeX syntax in markdown format, with \\(\\LaTeX{}\\) for inline, $$\\LaTeX{}$$ for block."
         "Properly cite all the sources inline from 'Gathered Relevant Contexts' with [cite_number],"
         "and add a corresponding bibliography list with their urls in markdown format in the end of your report."
     )
     messages = [
-        {"role": "system", "content": "You are a skilled report writer."},
+        {"role": "system", "content": "You are a skilled report writer." + (f"There is also some extra system instructions: {system_instruction}" if system_instruction else "")},
         {"role": "user", "content": f"User Query: {user_query}\n\nGathered Relevant Contexts:\n{context_combined}" + (f"\n\nWriting plan from a planning agent:\n{report_planning}" if report_planning else "") + f"\n\nWriting Instructions:{prompt}"}
     ]
     report = await (call_ollama_async(session, messages) if USE_OLLAMA else call_openrouter_async(session, messages))
@@ -660,7 +661,7 @@ async def process_link(session, link, user_query, search_query, create_chunk=Non
         context = await extract_relevant_context_async(session, user_query, search_query, page_text, link)
         if context:
             status_msg = f"Extracted context from {link} (first 200 chars): {context[:200]}\n\n"
-            if create_chunk:
+            if create_chunk and VERBOSE_WEB_PARSE:
                 yield create_chunk(status_msg)
             else:
                 print(status_msg)
@@ -673,7 +674,7 @@ async def process_link(session, link, user_query, search_query, create_chunk=Non
 # Main Asynchronous Routine
 # =========================
 
-async def process_research(user_query: str, max_iterations: int = 10, max_search_items: int = 4):
+async def process_research(system_instruction: str, user_query: str, max_iterations: int = 10, max_search_items: int = 4):
     """Core research processing function that returns the final report"""
     iteration_limit = max_iterations
     aggregated_contexts = []
@@ -744,9 +745,9 @@ async def process_research(user_query: str, max_iterations: int = 10, max_search
         else:
             final_report_planning = None
 
-        return await generate_final_report_async(session, user_query, final_report_planning, aggregated_contexts)
+        return await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
 
-async def stream_research(user_query: str, max_iterations: int = 10, max_search_items: int = 4):
+async def stream_research(system_instruction: str, user_query: str, max_iterations: int = 10, max_search_items: int = 4):
     """Generator function for streaming research results"""
     def create_chunk(content: str) -> str:
         chunk = ChatCompletionChunk(
@@ -856,16 +857,16 @@ async def stream_research(user_query: str, max_iterations: int = 10, max_search_
             final_report_planning = None
 
         yield create_chunk("\n</think>\n\n")
-        final_report = await generate_final_report_async(session, user_query, final_report_planning, aggregated_contexts)
+        final_report = await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
         yield create_chunk(final_report)
         yield "data: [DONE]\n\n"
 
-async def async_main(user_query: str, max_iterations: int = 10, max_search_items: int = 4, stream: bool = False):
+async def async_main(system_instruction: str,user_query: str, max_iterations: int = 10, max_search_items: int = 4, stream: bool = False):
     """Main entry point that handles both streaming and non-streaming modes"""
     if stream:
-        return stream_research(user_query, max_iterations, max_search_items)
+        return stream_research(system_instruction, user_query, max_iterations, max_search_items)
     else:
-        return await process_research(user_query, max_iterations, max_search_items)
+        return await process_research(system_instruction, user_query, max_iterations, max_search_items)
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
@@ -883,10 +884,16 @@ async def chat_completions(request: ChatCompletionRequest):
             status_code=400,
             content={"error": {"message": "No user message found"}}
         )
+    
+    # Get the last system message
+    last_system_message = next((msg for msg in reversed(request.messages) if msg.role == "system"), None)
+    if not last_system_message:
+        last_system_message = Message(role="system", content="")
 
     if request.stream:
         # Get the async generator from async_main
         generator = await async_main(
+            last_system_message.content,
             last_message.content,
             max_iterations=request.max_iterations,
             max_search_items=request.max_search_items,
@@ -898,6 +905,7 @@ async def chat_completions(request: ChatCompletionRequest):
         )
     else:
         final_report = await async_main(
+            last_system_message.content,
             last_message.content,
             max_iterations=request.max_iterations,
             max_search_items=request.max_search_items,
