@@ -150,8 +150,9 @@ You are all set! Now you can start using the OpenAI deep research like service i
 
 - If you use the online mode, the cost is around \$0.1 to \$0.5 for simple reports in minutes or up to \$2 for complex reports in up to an hour. (Using Gemini 2.0 Flash paid version as reference, claude and o3-mini will be much expensive)
 - If you use the hybrid mode, the cost is around \$0.01 to \$0.1 for even most comprehensive reports. But please ensure you have enough context length for the models to work with, recommend at least 32k tokens.
+- If you use the fully local mode, the generation time will be a lot longer, for a 5 interation 4 search items report, it will take around 1 hour on my RX 7800 XT.
 
-My example, a 8-pages proceeding style physics report going through 573 sources took 51 min at €1.4 with Gemini 2.0 Flash(via openrouter) and Jina.
+My example, a 8-pages proceeding style physics report going through 573 sources using online method took 51 min at €1.4 with Gemini 2.0 Flash(via openrouter) and Jina.
 
 Of course, the above is if you don't count electricity bill.
 

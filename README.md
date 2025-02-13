@@ -1,10 +1,10 @@
 # OpenDeepResearcher via Searxng 🧑‍🔬
 
-A robust research tool that uses AI to perform comprehensive research on any topic, offering flexible deployment through Docker, direct Python execution, or Jupyter notebooks.
+A robust research tool that uses AI to perform comprehensive research on any topic, offering flexible deployment through Docker, direct Python execution as OpenAI compatible endpoint with whatever frontend you like, or Jupyter notebooks.
 
 ![OpenDeepResearcher](./demos/Demo.png)
 
-*A demo usage in [Msty](https://msty.app)*
+*A demo usage with [Msty](https://msty.app) as frontend, there is also a dedicated [manual](./README-for-Msty.md) for Msty settings.*
 
 ## 🚀 Docker/Python Setup (Recommended)
 
@@ -202,6 +202,16 @@ graph TB;
 - **Chrome/Browser**: Choose between external Chrome (use_jina = false, use_embed_browser = false) or embedded browser (use_embed_browser = true)
 - **SearXNG Access**: For local setup, verify port 4000 is available. Alternatively, use https://searx.perennialte.ch/ or another public instance that supports JSON output (test with `instance-url/search?q=test&format=json` to see if it returns JSON data or 403)
 
+## Price prediction
+
+- If you use the online mode, the cost is around \$0.1 to \$0.5 for simple reports in minutes or up to \$2 for complex reports in up to an hour. (Using Gemini 2.0 Flash paid version as reference, claude and o3-mini will be much expensive)
+- If you use the hybrid mode, the cost is around \$0.01 to \$0.1 for even most comprehensive reports. But please ensure you have enough context length for the models to work with, recommend at least 32k tokens.
+- If you use the fully local mode, the generation time will be a lot longer, for a 5 interation 4 search items report, it will take around 1 hour on my RX 7800 XT.
+
+My example, a 8-pages proceeding style physics report going through 573 sources using online method took 51 min at €1.4 with Gemini 2.0 Flash(via openrouter) and Jina.
+
+Of course, the above is if you don't count electricity bill.
+
 ---
 
 Follow original author Matt on [X](https://x.com/mattshumer_) for base code updates.
@@ -209,3 +219,5 @@ Follow original author Matt on [X](https://x.com/mattshumer_) for base code upda
 Follow this repo for academic and local use updates.
 
 OpenDeepResearcher and OpenDeepResearcher-via-searxng are released under the MIT License. See the LICENSE file for more details.
+
+Also my gratitude to all the open-source software we have used in this project, including [ollama](http://github.com/ollama/ollama), [searxng](https://github.com/searxng/searxng), [docling](https://github.com/DS4SD/docling), [playwright](https://github.com/microsoft/playwright), [Jina](https://huggingface.co/jinaai/reader-lm-1.5b) and many more.
