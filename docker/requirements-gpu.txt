@@ -6,6 +6,3 @@ fastapi>=0.115.8
 pydantic>=2.10.6
 uvicorn>=0.34.0
 ollama>=0.4.5
---extra-index-url https://download.pytorch.org/whl/cpu
-torch
-torchvision

@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install Playwright and its Chromium browser
+RUN playwright install chromium && playwright install-deps
+
 # Create temp_pdf directory as specified in research.config
 RUN mkdir -p ./temp_pdf
 

@@ -43,13 +43,17 @@ use_ollama = true   # Use local models
 with_planning = true
 default_model = mistral-small
 reason_model = deepseek-r1:14b
+[LocalAI]
+default_model_ctx = -1 # Use -1 to load default context length settings from modelfile
+reason_model_ctx = -1
 ```
 
 ## Configuration Reference (research.config)
 
 ### [LocalAI]
 - `ollama_base_url`: Ollama API endpoint (default: http://localhost:11434)
-
+- `default_model_ctx` : Set context length for search and writing models, -1 for default
+- `reason_model_ctx` : Set context length for reasoning and planning models, -1 for default
 ### [API]
 - `openai_compat_api_key`: Authentication key for the API endpoint
 - `jina_api_key`: Required if use_jina = true
@@ -68,6 +72,8 @@ reason_model = deepseek-r1:14b
 - `concurrent_limit`: Maximum concurrent operations (default: 3)
 - `cool_down`: Delay between requests to same domain (default: 10.0)
 - `chrome_port`: Chrome debugging port (default: 9222)
+- `chrome_host_ip`: Chrome host IP address (default: http://localhost, if you are not running with `--remote-debugging-address=0.0.0.0`, you need to change this to your local IP)
+- `use_embed_browser`: Use embedded Playwright browser instead of external Chrome (default: false)
 
 ### [Parsing]
 - `temp_pdf_dir`: Directory for temporary PDF storage
@@ -92,13 +98,19 @@ reason_model = deepseek-r1:14b
    ```
 
 3. For Local Web Parsing (if use_jina = false):
-   ```bash
-   # Start Chrome with your credentials for academic access
-   google-chrome --remote-debugging-port=9222 --user-data-dir=/path/to/profile
-   
-   # Optional: Enhanced parsing capabilities
-   ollama pull reader-lm:0.5b
-   ```
+    ```bash
+    # Option 1: External Chrome (use_embed_browser = false)
+    google-chrome --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0
+    # Optional: Start Chrome with your credentials for academic access
+    google-chrome --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --user-data-dir=/path/to/profile
+    
+    # Option 2: Embedded Browser (use_embed_browser = true)
+    # No need to start Chrome manually, set use_embed_browser = true in research.config
+    # The container will automatically manage a headless browser
+    
+    # Optional: Enhanced parsing capabilities
+    ollama pull reader-lm:0.5b
+    ```
 
 4. Start Services:
 
@@ -171,10 +183,14 @@ curl http://localhost:8000/v1/chat/completions \
 
 ## Troubleshooting
 
-1. Chrome Connection Issues:
-   - Verify Chrome is running with remote debugging
-   - Check port 9222 accessibility
-   - Ensure no firewall blocks the connection
+1. Chrome/Browser Issues:
+    - For external Chrome (use_embed_browser = false):
+        - Verify Chrome is running with remote debugging
+        - Check port 9222 accessibility
+        - Ensure no firewall blocks the connection
+    - For embedded browser (use_embed_browser = true):
+        - No manual Chrome setup needed
+        - Check container logs for Playwright browser installation status
 
 2. SearXNG Issues:
    - Verify port 4000 availability

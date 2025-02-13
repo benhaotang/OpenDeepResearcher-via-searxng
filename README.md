@@ -34,6 +34,9 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
    default_model = mistral-small
    reason_model = deepseek-r1:14b
    
+   [Concurrency]
+   use_embed_browser = true/false  # Use embedded browser instead of external Chrome
+   
    [API]
    openai_url = https://openrouter.ai/api/v1/chat/completions # Most OpenAI compatible endpoint
    openai_compat_api_key = your-key-here  # For API authentication
@@ -48,8 +51,12 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
      ```
    - For local web parsing (if use_jina = false):
      ```bash
+     # Option 1: Use external Chrome (use_embed_browser = false in research.config)
      # Start Chrome debug mode, add optional user-data-dir for profile with online credentials
-     google-chrome --remote-debugging-port=9222 [--user-data-dir=/path/to/profile]
+     google-chrome --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 [--user-data-dir=/path/to/profile]
+     
+     # Option 2: Use embedded browser (use_embed_browser = true in research.config)
+     # No manual Chrome setup needed, container manages headless browser automatically
      
      # Optional: Enhanced parsing
      ollama pull reader-lm:0.5b  # webpage parsing
@@ -78,15 +85,14 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
    ```
 
 4. Access points:
-   - API: http://localhost:8000/v1 (OpenAI-compatible endpoint)
-   - SearXNG: http://localhost:4000
-   - Chrome Debug: http://localhost:9222 (only needed if use_jina = false)
+    - API: http://localhost:8000/v1 (OpenAI-compatible endpoint)
+    - SearXNG: http://localhost:4000
+    - Chrome Debug: http://localhost:9222 (only needed if use_jina = false and use_embed_browser = false)
 
 5. Usage Example:
    ```python
    import openai
    openai.base_url = "http://localhost:8000/v1"
-   openai.api_key = "your-key-here"  # From research.config
    
    response = openai.chat.completions.create(
        model="deep_researcher",
@@ -106,7 +112,7 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
        print(chunk.choices[0].delta.content or "", end="")
    ```
 
-## 📓 Jupyter Notebook Setup (Alternative)
+## 📓 Jupyter Notebook Setup (Alternative, obsolete soon)
 
 If you prefer using Jupyter notebooks directly:
 
@@ -181,13 +187,14 @@ graph TB;
 - [x] Make into a docker image for easy install
 - [ ] Refine process and reduce token usage via DSPy
 - [ ] Integrate tool calling
+- [ ] Add classifer models to fact-check sources
 
 ## 💡 Troubleshooting
 
 - **RuntimeError with asyncio**: Install and apply `nest_asyncio`
 - **API Issues**: Verify API keys and rate limits
 - **Jina URL resolve issue**: Wait and retry, usually due to high load
-- **Chrome Connection**: Only needed when not using Jina API
+- **Chrome/Browser**: Choose between external Chrome (use_jina = false, use_embed_browser = false) or embedded browser (use_embed_browser = true)
 - **SearXNG Access**: Verify port 4000 is available
 
 ---
