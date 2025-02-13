@@ -2,6 +2,10 @@
 
 A robust research tool that uses AI to perform comprehensive research on any topic, offering flexible deployment through Docker, direct Python execution, or Jupyter notebooks.
 
+![OpenDeepResearcher](./demos/Demo.png)
+
+*A demo usage in [Msty](https://msty.app)*
+
 ## 🚀 Docker/Python Setup (Recommended)
 
 The setup provides an OpenAI-compatible API endpoint with flexible configuration for different operation modes:
