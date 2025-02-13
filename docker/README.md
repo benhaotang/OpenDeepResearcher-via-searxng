@@ -138,7 +138,7 @@ openai.api_key = "your-key-here"  # From research.config
 response = openai.chat.completions.create(
     model="deep_researcher",
     messages=[
-        {"role": "system", "content": "Focus on academic sources"},
+        {"role": "system", "content": "Write in a formal tone."}, # Only writing instructions are supported now
         {"role": "user", "content": "Latest developments in quantum computing"}
     ],
     stream=True,  # Enable live updates

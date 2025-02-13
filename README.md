@@ -87,6 +87,7 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
    response = openai.chat.completions.create(
        model="deep_researcher",
        messages=[{"role": "user", "content": "What is quantum computing?"}],
+       # System messages can also be added, but it only affects the final writing style
        # Research control parameters
        max_iterations=10,  # Control research depth (1-50)
        max_search_items=4,  # Results per search (1-20), only for use_jina = false
