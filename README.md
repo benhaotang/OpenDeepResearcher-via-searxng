@@ -41,6 +41,9 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
    openai_url = https://openrouter.ai/api/v1/chat/completions # Most OpenAI compatible endpoint
    openai_compat_api_key = your-key-here  # For API authentication
    jina_api_key = your-jina-key          # Only needed if use_jina = true
+   searxng_url = http://localhost:4000/search # Default for docker setup
+   # OR use a reliable public instance if you don't want to setup docker:
+   # searxng_url = https://searx.perennialte.ch/search
    ```
 
 2. Setup Requirements:
@@ -171,7 +174,9 @@ graph TB;
 
 ## ⚙️ Core Components
 
-- **SearXNG**: Private, unbiased search (local or [public instance](https://searx.space))
+- **SearXNG**: Private, unbiased search:
+  - Local: Included in Docker setup (recommended)
+  - Public: https://searx.perennialte.ch/ (reliable instance) or other [public instances](https://searx.space) that support JSON output
 - **Content Parsing**:
   - Fast: Jina API
   - Private: reader-lm + docling (local)
@@ -195,7 +200,7 @@ graph TB;
 - **API Issues**: Verify API keys and rate limits
 - **Jina URL resolve issue**: Wait and retry, usually due to high load
 - **Chrome/Browser**: Choose between external Chrome (use_jina = false, use_embed_browser = false) or embedded browser (use_embed_browser = true)
-- **SearXNG Access**: Verify port 4000 is available
+- **SearXNG Access**: For local setup, verify port 4000 is available. Alternatively, use https://searx.perennialte.ch/ or another public instance that supports JSON output (test with `instance-url/search?q=test&format=json` to see if it returns JSON data or 403)
 
 ---
 
