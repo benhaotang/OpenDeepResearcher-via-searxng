@@ -15,7 +15,7 @@ services:
       - "8000:8000"
     volumes:
       - ./main.py:/app/main.py
-      - ./requirements.txt:/app/requirements.txt
+      - ./requirements-gpu.txt:/app/requirements.txt
       - ./research.config:/app/research.config
       - ./temp_pdf:/app/temp_pdf
     environment:

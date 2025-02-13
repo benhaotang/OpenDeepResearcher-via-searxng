@@ -76,6 +76,8 @@ config.read('research.config')
 # ---------------------------
 from ollama import AsyncClient
 OLLAMA_BASE_URL = config.get('LocalAI', 'ollama_base_url')
+DEFAULT_MODEL_CTX = int(config.get('LocalAI', 'default_model_ctx')) # -1 to load config from original modelfile
+REASON_MODEL_CTX = int(config.get('LocalAI', 'reason_model_ctx')) # -1 to load config from original modelfile
 
 # ---------------------------
 # Configuration Constants
@@ -98,6 +100,8 @@ REASON_MODEL = config.get('Settings', 'reason_model')
 concurrent_limit = config.getint('Concurrency', 'concurrent_limit')
 cool_down = config.getfloat('Concurrency', 'cool_down')
 CHROME_PORT = config.getint('Concurrency', 'chrome_port')
+CHROME_HOST_IP = config.get('Concurrency', 'chrome_host_ip')
+USE_EMBED_BROWSER = config.getboolean('Concurrency', 'use_embed_browser')
 global_semaphore = asyncio.Semaphore(concurrent_limit)
 domain_locks = defaultdict(asyncio.Lock)  # domain -> asyncio.Lock
 domain_next_allowed_time = defaultdict(lambda: 0.0)  # domain -> float (epoch time)
@@ -152,7 +156,7 @@ async def call_openrouter_async(session, messages, model=DEFAULT_MODEL):
 # Local AI and Browser use
 # --------------------------
 
-async def call_ollama_async(session, messages, model=DEFAULT_MODEL, max_tokens=20000):
+async def call_ollama_async(session, messages, model=DEFAULT_MODEL, max_tokens=20000, ctx=-1):
     """
     Asynchronously call the Ollama chat completion API with the provided messages.
     Returns the content of the assistant’s reply.
@@ -161,9 +165,14 @@ async def call_ollama_async(session, messages, model=DEFAULT_MODEL, max_tokens=2
         client = AsyncClient(host=OLLAMA_BASE_URL)
         response_content = ""
 
-        async for part in await client.chat(model=model, messages=messages, stream=True, options=dict(num_predict=max_tokens)):
-            if 'message' in part and 'content' in part['message']:
-                response_content += part['message']['content']
+        if ctx <= 2000: # Load config from original modelfile respect how ollama does
+            async for part in await client.chat(model=model, messages=messages, stream=True, options=dict(num_predict=max_tokens)):
+                if 'message' in part and 'content' in part['message']:
+                    response_content += part['message']['content']
+        else:
+            async for part in await client.chat(model=model, messages=messages, stream=True, options=dict(num_predict=max_tokens,num_ctx=ctx)):
+                if 'message' in part and 'content' in part['message']:
+                    response_content += part['message']['content']
 
         return response_content if response_content else None
     except Exception as e:
@@ -291,10 +300,20 @@ async def fetch_webpage_text_async(session, url):
                 async with async_playwright() as p:
                     # Attempt to connect to an already running Chrome instance
                     try:
-                        browser = await p.chromium.connect_over_cdp(f"http://localhost:{CHROME_PORT}")
+                        if USE_EMBED_BROWSER:
+                            browser = await p.chromium.launch(
+                                headless=True,
+                                args=['--no-sandbox', '--disable-setuid-sandbox'],
+                                firefox_user_prefs={
+                                    "general.useragent.override": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+                                }
+                            )
+                        else:
+                            browser = await p.chromium.connect_over_cdp(f"{CHROME_HOST_IP}:{CHROME_PORT}")
                     except Exception as e:
-                        print(f"Error connecting to Chrome on port {CHROME_PORT}: {e}")
-                        return f"Failed to connect to Chrome on port {CHROME_PORT}"
+                        error_msg = "Failed to launch browser" if USE_EMBED_BROWSER else f"Failed to connect to Chrome on port {CHROME_PORT}"
+                        print(f"Error: {error_msg} - {e}")
+                        return error_msg
 
                     context = await browser.new_context()
                     page = await context.new_page()
@@ -371,7 +390,7 @@ async def make_initial_searching_plan_async(session, user_query):
         {"role": "system", "content": "You are an advanced reasoning LLM that guides a following search agent to search for relevant information for a research."},
         {"role": "user", "content": f"User Query: {user_query}\n\n{prompt}"}
     ]
-    response = await (call_ollama_async(session, messages, model=REASON_MODEL) if USE_OLLAMA else call_openrouter_async(session, messages, model=REASON_MODEL))
+    response = await (call_ollama_async(session, messages, model=REASON_MODEL, ctx=REASON_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages, model=REASON_MODEL))
     if response:
         try:
             # Remove <think>...</think> tags and their content if they exist
@@ -412,7 +431,7 @@ async def judge_search_result_and_future_plan_aync(session, user_query, original
         {"role": "system", "content": "You are an advanced reasoning LLM that guides a following search agent to search for relevant information for a research."},
         {"role": "user", "content": f"User Query: {user_query}\n\n Original Research Plan: {original_plan} \n\nExtracted Relevant Contexts by the search agent:\n{context_combined} \n\n{prompt}"}
     ]
-    response = await (call_ollama_async(session, messages, model=REASON_MODEL) if USE_OLLAMA else call_openrouter_async(session, messages, model=REASON_MODEL))
+    response = await (call_ollama_async(session, messages, model=REASON_MODEL, ctx=REASON_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages, model=REASON_MODEL))
     if response:
         try:
             # Remove <think>...</think> tags and their content if they exist
@@ -452,7 +471,7 @@ async def generate_writing_plan_aync(session, user_query, aggregated_contexts):
         {"role": "system", "content": "You are an advanced reasoning LLM that structures research findings into a well-organized final report."},
         {"role": "user", "content": f"User Query: {user_query}\n\nAggregated Research Findings:\n{aggregated_contexts}\n\n{prompt}"}
     ]
-    response = await (call_ollama_async(session, messages, model=REASON_MODEL) if USE_OLLAMA else call_openrouter_async(session, messages, model=REASON_MODEL))
+    response = await (call_ollama_async(session, messages, model=REASON_MODEL, ctx=REASON_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages, model=REASON_MODEL))
     if response:
         try:
             # Remove <think>...</think> tags and their content if they exist
@@ -478,7 +497,7 @@ async def generate_search_queries_async(session, query_plan):
         {"role": "system", "content": "You are a helpful and precise research assistant."},
         {"role": "user", "content": f"{query_plan}\n\n{prompt}"}
     ]
-    response = await (call_ollama_async(session, messages) if USE_OLLAMA else call_openrouter_async(session, messages))
+    response = await (call_ollama_async(session, messages,ctx=DEFAULT_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages))
     if response:
         cleaned = response.strip()
         
@@ -546,7 +565,7 @@ async def is_page_useful_async(session, user_query, page_text, page_url):
         {"role": "system", "content": "You are a strict and concise evaluator of research relevance."},
         {"role": "user", "content": f"User Query: {user_query}\n\nWeb URL: {page_url}\n\nWebpage Content (first 20000 characters):\n{page_text[:20000]}\n\n{prompt}"}
     ]
-    response = await (call_ollama_async(session, messages) if USE_OLLAMA else call_openrouter_async(session, messages))
+    response = await (call_ollama_async(session, messages, ctx=DEFAULT_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages))
     if response:
         answer = response.strip()
         if answer in ["Yes", "No"]:
@@ -574,7 +593,7 @@ async def extract_relevant_context_async(session, user_query, search_query, page
         {"role": "system", "content": "You are an expert in extracting and summarizing relevant information."},
         {"role": "user", "content": f"User Query: {user_query}\nSearch Query: {search_query}\n\nWeb URL: {page_url}\n\nWebpage Content (first 20000 characters):\n{page_text[:20000]}\n\n{prompt}"}
     ]
-    response = await (call_ollama_async(session, messages) if USE_OLLAMA else call_openrouter_async(session, messages))
+    response = await (call_ollama_async(session, messages, ctx=DEFAULT_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages))
     if response:
         return response.strip()
     return ""
@@ -598,7 +617,7 @@ async def get_new_search_queries_async(session, user_query, new_research_plan, p
         {"role": "system", "content": "You are a systematic research planner."},
         {"role": "user", "content": f"User Query: {user_query}\nPrevious Search Queries: {previous_search_queries}\n\nExtracted Relevant Contexts:\n{context_combined}"+(f"\n\nNext Research Plan by planning agent:\n{new_research_plan}" if new_research_plan else "")+f"\n\n{prompt}"}
     ]
-    response = await (call_ollama_async(session, messages) if USE_OLLAMA else call_openrouter_async(session, messages))
+    response = await (call_ollama_async(session, messages, ctx=DEFAULT_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages))
     if response:
         cleaned = response.strip()
         if cleaned == "<done>":
@@ -638,14 +657,15 @@ async def generate_final_report_async(session, system_instruction, user_query, r
         "write a comprehensive, well-structured, and detailed report that addresses the query thoroughly. "
         "Include all relevant insights and conclusions without extraneous commentary."
         "Math equations should use proper LaTeX syntax in markdown format, with \\(\\LaTeX{}\\) for inline, $$\\LaTeX{}$$ for block."
-        "Properly cite all the sources inline from 'Gathered Relevant Contexts' with [cite_number],"
+        "Properly cite all the VALID and REAL sources inline from 'Gathered Relevant Contexts' with [cite_number]"
         "and add a corresponding bibliography list with their urls in markdown format in the end of your report."
+        "REMEMBER: NEVER make up sources or citations, only use the provided contexts, if no source, just write 'No available sources'."
     )
     messages = [
         {"role": "system", "content": "You are a skilled report writer." + (f"There is also some extra system instructions: {system_instruction}" if system_instruction else "")},
         {"role": "user", "content": f"User Query: {user_query}\n\nGathered Relevant Contexts:\n{context_combined}" + (f"\n\nWriting plan from a planning agent:\n{report_planning}" if report_planning else "") + f"\n\nWriting Instructions:{prompt}"}
     ]
-    report = await (call_ollama_async(session, messages) if USE_OLLAMA else call_openrouter_async(session, messages))
+    report = await (call_ollama_async(session, messages, ctx=DEFAULT_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages))
     return report
 
 async def process_link(session, link, user_query, search_query, create_chunk=None):
@@ -955,12 +975,22 @@ async def chat_completions(request: ChatCompletionRequest):
     if not USE_JINA:
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.connect_over_cdp(f"http://localhost:{CHROME_PORT}")
+                if USE_EMBED_BROWSER:
+                    browser = await p.chromium.launch(
+                        headless=True,
+                        args=['--no-sandbox', '--disable-setuid-sandbox'],
+                        firefox_user_prefs={
+                            "general.useragent.override": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+                        }
+                    )
+                else:
+                    browser = await p.chromium.connect_over_cdp(f"{CHROME_HOST_IP}:{CHROME_PORT}")
                 await browser.close()
         except Exception as e:
+            error_msg = "Failed to initialize browser" if USE_EMBED_BROWSER else "Not using Jina but no Chrome session connected"
             return JSONResponse(
                 status_code=400,
-                content={"error": {"message": "Not using Jina but no Chrome session connected"}}
+                content={"error": {"message": error_msg}}
             )
 
     # Get the last user message
