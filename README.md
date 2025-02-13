@@ -1,168 +1,199 @@
-# OpenDeepResearcher via Searxng 🧑‍🔬 (Ollama and PlayWright for complete local operation)
+# OpenDeepResearcher via Searxng 🧑‍🔬
 
-> [!TIP]
-> **What is different with the original repo?**
-> - Use Searxng to reduce bias and improve privacy.
-> - Report have citations📰!
-> - Planning agent🤖 from reasoning models!!
-> - Ollama support for local AI interface💻 for maximal privacy!
-> - *[experimental]* Playwright🔗 support via Chrome/Chromium debug mode, parse webpage with local [reader-lm](https://huggingface.co/jinaai/reader-lm-1.5b), pdfs with [docling](https://github.com/DS4SD/docling)
-> - Some refinement to reduce search query fail rate and token use.
+A robust research tool that uses AI to perform comprehensive research on any topic, offering flexible deployment through Docker, direct Python execution, or Jupyter notebooks.
 
-## 🧑‍🏫 TL;DR
+![OpenDeepResearcher](./demos/Demo.png)
 
-- 🌐 Online service for maximum speed?
-   - **💸 Save money?** [open_deep_researcher.ipynb](open_deep_researcher.ipynb)
-   - **💎 Absolute quality?** [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb)
-- 🧭 Balance Speed and privacy
-   - **🏎️ Faster**: [local_open_deep_researcher.ipynb](local_open_deep_researcher.ipynb)
-   - **🚗 Slower but higher quality**: [local_open_deep_researcher_with_planning.ipynb](local_open_deep_researcher_with_planning.ipynb)
-- 💻 Want completely local?
-   - **🚶 Slowest but everything happen on device** [local_open_deep_researcher_via_playwright.ipynb](local_open_deep_researcher_via_playwright.ipynb) *[Tested]*
-      - Change `BROWSE_LITE` to 1 to speed up parsing without using reader-lm and docling
-      - **Planning?**:  [local_open_deep_researcher_with_planning_via_playwright.ipynb](local_open_deep_researcher_with_planning_via_playwright.ipynb)  *[Untested]*
-         - ⚠️ Note: I have not personally tested local planning, because my machine cannot even finish at this stage, please if you can run, share your experience with me.
+*A demo usage in [Msty](https://msty.app)*
 
-## 📝 General INFO
+## 🚀 Docker/Python Setup (Recommended)
 
-This notebook implements an **AI researcher** that continuously searches for information based on a user query until the system is confident that it has gathered all the necessary details. It makes use of several services to do so:
+The setup provides an OpenAI-compatible API endpoint with flexible configuration for different operation modes:
 
-- **SEARXNG**: To perform searches without bias and privately.
-- **Content Parser**
-   - **Jina**: To fetch and extract webpage content fast and reliable.
-   - **Local solutions**:
-      - [reader-lm](https://huggingface.co/jinaai/reader-lm-1.5b) by Jina via ollama for webpage parsing `ollama pull reader-lm:0.5b`
-      - [docling](https://github.com/DS4SD/docling) for PDF OCRs
-      - **WARNING: This is highly experimental, your instance may hang for long time due to poor compute power!! Use at your own risk.**
-- **LLM Provider**: To interact with a LLM for generating search queries, evaluating page relevance, and extracting context.
-   - **OpenRouter**: Paid, but fast
-      - default searching and writing model: `anthropic/claude-3.5-haiku`
-      - default reasoning and planning model: `deepseek/deepseek-r1-distill-qwen-32b`
-   - *[NEW]* **Ollama**: Private, but a lot slower
-      - default searching and writing model: `mistral-small` via `ollama pull mistral-small`
-      - default reasoning and planning model: `deepseek-r1:14b` via `ollama pull deepseek-r1:14b`
+1. Configure `research.config` based on your needs:
+   ```ini
+   [Settings]
+   # Choose your operation mode:
+   use_jina = true/false    # Use Jina API for fast web parsing
+   use_ollama = true/false  # Use local Ollama models
+   with_planning = true     # Enable research planning
+   
+   # For online mode (Maximum Speed):
+   use_jina = true
+   use_ollama = false
+   default_model = anthropic/claude-3.5-haiku
+   reason_model = deepseek/deepseek-r1-distill-qwen-32b
+   
+   # For hybrid mode (Balance):
+   use_jina = true
+   use_ollama = true
+   
+   # For fully local mode (Maximum Privacy):
+   use_jina = false
+   use_ollama = true
+   default_model = mistral-small
+   reason_model = deepseek-r1:14b
+   
+   [API]
+   openai_url = https://openrouter.ai/api/v1/chat/completions # Most OpenAI compatible endpoint
+   openai_compat_api_key = your-key-here  # For API authentication
+   jina_api_key = your-jina-key          # Only needed if use_jina = true
+   ```
 
-## ☑️ Features
+2. Setup Requirements:
+   - For local models (if use_ollama = true):
+     ```bash
+     ollama pull mistral-small    # search & writing
+     ollama pull deepseek-r1:14b  # reasoning & planning
+     ```
+   - For local web parsing (if use_jina = false):
+     ```bash
+     # Start Chrome debug mode, add optional user-data-dir for profile with online credentials
+     google-chrome --remote-debugging-port=9222 [--user-data-dir=/path/to/profile]
+     
+     # Optional: Enhanced parsing
+     ollama pull reader-lm:0.5b  # webpage parsing
+     pip install docling         # PDF parsing
+     ```
 
-- **Iterative Research Loop:** The system refines its search queries iteratively until no further queries are required.
-- **Asynchronous Processing:** Searches, webpage fetching, evaluation, and context extraction are performed concurrently to improve speed.
-- **Duplicate Filtering:** Aggregates and deduplicates links within each round, ensuring that the same link isn’t processed twice.
-- **LLM-Powered Decision Making:** Uses the LLM to generate new search queries, decide on page usefulness, extract relevant context, and produce a final comprehensive report, now with citations.
-- **Plans made with Reasoning:** Before each iteration, a reasoning model will plan what to search, what to search more and how to write the final report to ensure robust planning strategy and good final quality. (only with [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb) and [local_open_deep_researcher_with_planning.ipynb](local_open_deep_researcher_with_planning.ipynb))
-- **Local models for maximum privacy**
+3. Choose your deployment:
+   
+   A. Using Docker and CPU (recommended):
+   ```bash
+   cd docker
+   docker compose up --build
+   ```
 
-## 🗺️ Planning via Reasoning
+   A.1. Using Docker and GPU 
+   ```bash
+   docker compose -f docker-compose.xxx.yml up --build # xxx = cuda or rocm
+   ```
+   **But for most user, I still suggest using CPU version for smaller file size as GPU now is only used for accelerating PDF OCR in fully local mode**
+
+   B. Direct Python (same functionality without containerization):
+   ```bash
+   cd docker
+   pip install -r requirements.txt
+   python main.py  # Runs on http://localhost:8000
+   ```
+
+4. Access points:
+   - API: http://localhost:8000/v1 (OpenAI-compatible endpoint)
+   - SearXNG: http://localhost:4000
+   - Chrome Debug: http://localhost:9222 (only needed if use_jina = false)
+
+5. Usage Example:
+   ```python
+   import openai
+   openai.base_url = "http://localhost:8000/v1"
+   openai.api_key = "your-key-here"  # From research.config
+   
+   response = openai.chat.completions.create(
+       model="deep_researcher",
+       messages=[{"role": "user", "content": "What is quantum computing?"}],
+       # System messages can also be added, but it only affects the final writing style
+       # Research control parameters
+       max_iterations=10,  # Control research depth (1-50)
+       max_search_items=4,  # Results per search (1-20), only for use_jina = false
+       stream=True,  # Enable streaming for live updates
+       # Optional: Override models from config
+       default_model="anthropic/claude-3.5-haiku",
+       reason_model="deepseek/deepseek-r1-distill-qwen-32b"
+   )
+   
+   # Stream output
+   for chunk in response:
+       print(chunk.choices[0].delta.content or "", end="")
+   ```
+
+## 📓 Jupyter Notebook Setup (Alternative)
+
+If you prefer using Jupyter notebooks directly:
+
+### 1. Online Mode (Maximum Speed)
+- Uses OpenRouter API and Jina API for fastest performance
+- Notebooks:
+  - Basic: [open_deep_researcher.ipynb](open_deep_researcher.ipynb)
+  - With Planning: [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb)
+- Requirements: OpenRouter API key and Jina API key
+
+### 2. Hybrid Mode (Speed/Privacy Balance)
+- Uses Ollama local models with Jina API
+- Notebooks:
+  - Basic: [local_open_deep_researcher.ipynb](local_open_deep_researcher.ipynb)
+  - With Planning: [local_open_deep_researcher_with_planning.ipynb](local_open_deep_researcher_with_planning.ipynb)
+- Requirements: Ollama installation
+
+### 3. Fully Local Mode (Maximum Privacy)
+- Uses Ollama models and Playwright for complete local operation
+- Notebooks:
+  - Basic: [local_open_deep_researcher_via_playwright.ipynb](local_open_deep_researcher_via_playwright.ipynb)
+  - With Planning: [local_open_deep_researcher_with_planning_via_playwright.ipynb](local_open_deep_researcher_with_planning.ipynb)
+- Requirements: 
+  - Chrome/Chromium with debug mode
+  - Optional: reader-lm and docling for enhanced parsing
+
+## 🧑‍🔬 How It Works
 
 ```mermaid
-graph LR;
-    A[User Query] --> B[Reasoning Model: Generate Initial Research Plan]
-    B --> C[Search Agent: Conduct Search]
-    C --> D[Reasoning Model: Evaluate Search Results]
-    D -->|More Research Needed| C
-    D -->|Search Complete or Max iterations| E[Reasoning Model: Generate Writing Plan]
-    E --> F[Writing Agent: Write Final Report]
-    style A fill:#f9f,stroke:#333,stroke-width:2px;
-    style F fill:#ccf,stroke:#333,stroke-width:2px;
+graph TB;
+    subgraph Input
+    A[User Query]
+    end
+    subgraph Planning
+    B[Generate Research Plan]
+    E[Generate Writing Plan]
+    end
+    subgraph Research
+    C[Search Agent]
+    D[Evaluate Results]
+    end
+    subgraph Output
+    F[Final Report]
+    end
+    
+    A --> B
+    B --> C
+    C --> D
+    D -->|Need More| C
+    D -->|Complete| E
+    E --> F
+    
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style F fill:#ccf,stroke:#333,stroke-width:2px
 ```
 
-## 🧰 Requirements
+## ⚙️ Core Components
 
-- API access and keys for:
-  - **OpenRouter API**
-  - **Jina API**
-- Local or public instance of **Searxng**
-   - Get started locally
-      - `docker run -d --name searxng --restart always -v $(pwd)/searxng:/etc/searxng:rw -p 4000:8080 docker.io/searxng/searxng:latest`
-      - More at [https://docs.searxng.org/admin/installation-docker.html#installation-docker](https://docs.searxng.org/admin/installation-docker.html#installation-docker)
-   - Public instance
-     - [searx-instances](https://github.com/searx/searx-instances)
-     - May have rate limits or usage logging
-- Local Ollama: check out [ollama.com](https://ollama.com)
-- A Chrome/Chromium browser running in debug mode `chromium --remote-debugging-port=9222 [--user-data-dir=/path/to/profile]`
-
-## 💾 Setup
-
-1. **Clone or Open the Notebook:**
-   - Download the notebook file.
-
-2. **Install `nest_asyncio`:**
-
-   Run the first cell to set up `nest_asyncio`.
-
-3. **Configure API Keys:**
-   - Replace the placeholder values in the notebook for `OPENROUTER_API_KEY`, and `JINA_API_KEY` with your actual API keys.
-
-4. **Set Base Searxng URL**
-   - Replace the placeholder values in the notebook for `BASE_SEARXNG_URL` with the instance you like.
-
-5. If using playwright?
-   - Chrome/Chromium browser installed.
-   - Launch debug mode with `chromium --remote-debugging-port=9222 [--user-data-dir=/path/to/profile]`, change the `CHROME_PORT` accordingly.
-   - Full Mode(`BROWSE_LITE=0`) or Lite Mode(`BROWSE_LITE=1`)?
-      - Full Mode parse html to markdown with reader-lm and OCR PDFs with docling, great quality, but can be extremely slow.
-      - Lite Mode works like the reader view in browser, fast but may not get everything.
-   - Modify other parameters in `Parsing settings` to better suit your machine's ability.
-
-## 🧑‍🔬 Usage
-
-1. **Run the Notebook Cells:**
-   Execute all cells in order. The notebook will prompt you for:
-   - A research query/topic.
-   - An optional maximum number of iterations (default is 10).
-
-2. **Follow the Research Process:**
-   - **Initial Query & Search Generation:** The notebook uses the LLM to generate initial search queries.
-   - **Asynchronous Searches & Extraction:** It performs SERPAPI searches for all queries concurrently, aggregates unique links, and processes each link in parallel to determine page usefulness and extract relevant context.
-   - **Iterative Refinement:** After each round, the aggregated context is analyzed by the LLM to determine if further search queries are needed.
-   - **Final Report:** Once the LLM indicates that no further research is needed (or the iteration limit is reached), a final report is generated based on all gathered context.
-
-3. **View the Final Report:**
-   The final comprehensive report will be printed in the output.
-
-## ❓ How It Works
-
-1. **Input & Query Generation:**  
-   The user enters a research topic, and the LLM generates up to four distinct search queries.
-
-2. **Concurrent Search & Processing:**  
-   - **SEARXNG:** Each search query is sent to searxng concurrently.
-   - **Deduplication:** All retrieved links are aggregated and deduplicated within the current iteration.
-   - **Jina & LLM:** Each unique link is processed concurrently to fetch webpage content via Jina, evaluate its usefulness with the LLM, and extract relevant information if the page is deemed useful.
-
-3. **Iterative Refinement:**  
-   The system passes the aggregated context to the LLM to determine if further search queries are needed. New queries are generated if required; otherwise, the loop terminates.
-
-4. **Final Report Generation:**  
-   All gathered context is compiled and sent to the LLM to produce a final, comprehensive report addressing the original query. And the llm is instructed to properly cite the sources and summarize all the citations into a bibliography list.
+- **SearXNG**: Private, unbiased search (local or [public instance](https://searx.space))
+- **Content Parsing**:
+  - Fast: Jina API
+  - Private: reader-lm + docling (local)
+- **LLM Provider**:
+  - Fast: OpenRouter API
+  - Private: Ollama (local models)
 
 ## 🏁 Roadmap
 
 - [x] Support Ollama
-- [x] Support Playwright to bypass publisher limits with library proxy (*[TIP]* You can now just launch the browser with credentials logged in with your profile)
-- [x] Use Playwright and Ollama's reader-lm to achieve 100% local service
-- [ ] Refine process and reduce token usage
-- [ ] Make into a pip package for easy install
+- [x] Support Playwright and your own credentials to bypass publisher limits
+- [x] Use Playwright and Ollama's reader-lm for 100% local service
+- [x] Make into a docker image for easy install
+- [ ] Refine process and reduce token usage via DSPy
 - [ ] Integrate tool calling
 
 ## 💡 Troubleshooting
 
-- **RuntimeError with asyncio:**  
-  If you encounter an error like:
-  ```
-  RuntimeError: asyncio.run() cannot be called from a running event loop
-  ```
-  Ensure you have applied `nest_asyncio` as shown in the setup section.
-
-- **API Issues:**  
-  Verify that your API keys are correct and that you are not exceeding any rate limits.
-
-- **Jina URL resolve issue**
-   Wait and try again, this is usually due to high load.
+- **RuntimeError with asyncio**: Install and apply `nest_asyncio`
+- **API Issues**: Verify API keys and rate limits
+- **Jina URL resolve issue**: Wait and retry, usually due to high load
+- **Chrome Connection**: Only needed when not using Jina API
+- **SearXNG Access**: Verify port 4000 is available
 
 ---
 
-Follow original author Matt on [X](https://x.com/mattshumer_) for updates on the base code.
+Follow original author Matt on [X](https://x.com/mattshumer_) for base code updates.
 
-Follow this repo for updates from my side for academic and local use.
+Follow this repo for academic and local use updates.
 
 OpenDeepResearcher and OpenDeepResearcher-via-searxng are released under the MIT License. See the LICENSE file for more details.
