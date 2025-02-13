@@ -1,16 +1,19 @@
-FROM python:3.12-slim
+FROM rocm/pytorch:rocm6.3.2_ubuntu24.04_py3.12_pytorch_release_2.4.0
 
-WORKDIR /app
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies required for Playwright
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
     && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /app
+
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Create temp_pdf directory as specified in research.config
 RUN mkdir -p ./temp_pdf
@@ -22,4 +25,4 @@ COPY research.config .
 # Expose FastAPI port
 EXPOSE 8000
 
-CMD ["python", "main.py"]
+CMD ["python3", "main.py"]

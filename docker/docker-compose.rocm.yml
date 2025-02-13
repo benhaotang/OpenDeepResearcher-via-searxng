@@ -1,6 +1,12 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.rocm
+    device_cgroup_rules:
+      - 'c 226:* rmw'  # ROCm device access
+    group_add:
+      - video  # Required for ROCm access
     ports:
       - "8000:8000"
     volumes:
@@ -8,8 +14,11 @@ services:
       - ./requirements.txt:/app/requirements.txt
       - ./research.config:/app/research.config
       - ./temp_pdf:/app/temp_pdf
+      - /dev/kfd:/dev/kfd  # ROCm device
+      - /dev/dri:/dev/dri  # ROCm device
     environment:
       - PYTHONUNBUFFERED=1
+      - HSA_OVERRIDE_GFX_VERSION=10.3.0  # May need adjustment based on your GPU
     depends_on:
       - searxng
     extra_hosts:

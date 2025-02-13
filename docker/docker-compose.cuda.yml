@@ -1,6 +1,16 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    runtime: nvidia  # Enable NVIDIA runtime
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     ports:
       - "8000:8000"
     volumes:
@@ -10,6 +20,7 @@ services:
       - ./temp_pdf:/app/temp_pdf
     environment:
       - PYTHONUNBUFFERED=1
+      - CUDA_VISIBLE_DEVICES=all
     depends_on:
       - searxng
     extra_hosts:

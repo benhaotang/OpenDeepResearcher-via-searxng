@@ -650,35 +650,54 @@ async def generate_final_report_async(session, system_instruction, user_query, r
 
 async def process_link(session, link, user_query, search_query, create_chunk=None):
     """
-    Process a single link: fetch its content, judge its usefulness, and if useful, extract the relevant context.
+    Process a single link with all operations running concurrently while maintaining proper status streaming.
     """
+    # Initial status message
     status_msg = f"Fetching content from: {link}\n\n"
     if create_chunk:
         yield create_chunk(status_msg)
     else:
         print(status_msg)
 
-    page_text = await fetch_webpage_text_async(session, link)
-    if not page_text:
-        return
+    try:
+        # Create fetch task immediately
+        fetch_task = asyncio.create_task(fetch_webpage_text_async(session, link))
+        
+        # Wait for fetch to complete
+        page_text = await fetch_task
+        if not page_text:
+            return
 
-    usefulness = await is_page_useful_async(session, user_query, page_text, link)
-    status_msg = f"Page usefulness for {link}: {usefulness}\n\n"
-    if create_chunk:
-        yield create_chunk(status_msg)
-    else:
-        print(status_msg)
+        # Create usefulness task immediately
+        usefulness_task = asyncio.create_task(is_page_useful_async(session, user_query, page_text, link))
+        
+        # Create context task but don't await it yet
+        context_task = asyncio.create_task(extract_relevant_context_async(session, user_query, search_query, page_text, link))
+        
+        # Wait for usefulness check and stream its result
+        usefulness = await usefulness_task
+        status_msg = f"Page usefulness for {link}: {usefulness}\n\n"
+        if create_chunk:
+            yield create_chunk(status_msg)
+        else:
+            print(status_msg)
 
-    if usefulness == "Yes":
-        context = await extract_relevant_context_async(session, user_query, search_query, page_text, link)
-        if context:
-            status_msg = f"Extracted context from {link} (first 200 chars): {context[:200]}\n\n"
-            if create_chunk and VERBOSE_WEB_PARSE:
-                yield create_chunk(status_msg)
-            else:
-                print(status_msg)
-            context="url:"+link+"\ncontext:"+context
-            yield context
+        # If useful, wait for context
+        if usefulness == "Yes":
+            context = await context_task
+            if context:
+                status_msg = f"Extracted context from {link} (first 200 chars): {context[:200]}\n\n"
+                if create_chunk and VERBOSE_WEB_PARSE:
+                    yield create_chunk(status_msg)
+                else:
+                    print(status_msg)
+                context = "url:" + link + "\ncontext:" + context
+                yield context
+        else:
+            # Cancel context task if not useful
+            context_task.cancel()
+    except Exception as e:
+        print(f"Error processing {link}: {e}")
     return
 
 
@@ -727,12 +746,22 @@ async def process_research(system_instruction: str, user_query: str, max_iterati
                     if link not in unique_links:
                         unique_links[link] = query
 
-            # Process links
-            for link in unique_links:
+            # Process all links truly concurrently
+            async def process_link_wrapper(link):
+                results = []
                 async for result in process_link(session, link, user_query, unique_links[link]):
-                    if isinstance(result, str):
-                        if result.startswith("url:"):
-                            iteration_contexts.append(result)
+                    if isinstance(result, str) and result.startswith("url:"):
+                        results.append(result)
+                return results
+
+            # Create and run all tasks concurrently
+            tasks = [process_link_wrapper(link) for link in unique_links]
+            all_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process results
+            for results in all_results:
+                if isinstance(results, list):  # Skip any exceptions
+                    iteration_contexts.extend(results)
 
             if iteration_contexts:
                 aggregated_contexts.extend(iteration_contexts)
@@ -822,14 +851,32 @@ async def stream_research(system_instruction: str, user_query: str, max_iteratio
 
             yield create_chunk(f"Processing {len(unique_links)} unique links...\n\n")
 
-            # Process links
-            for link in unique_links:
+            # Process all links concurrently while maintaining streaming
+            async def process_link_wrapper(link):
+                results = []
+                status_updates = []
                 async for result in process_link(session, link, user_query, unique_links[link], create_chunk):
                     if isinstance(result, str):
                         if result.startswith("url:"):
-                            iteration_contexts.append(result)
+                            results.append(result)
                         else:
-                            yield result
+                            status_updates.append(result)
+                return results, status_updates
+
+            # Create tasks for all links
+            tasks = [process_link_wrapper(link) for link in unique_links]
+            
+            # Process results as they complete
+            for completed in asyncio.as_completed(tasks):
+                try:
+                    results, status_updates = await completed
+                    # Stream status updates
+                    for update in status_updates:
+                        yield update
+                    # Add contexts
+                    iteration_contexts.extend(results)
+                except Exception as e:
+                    print(f"Error in link processing: {e}")
 
             if iteration_contexts:
                 aggregated_contexts.extend(iteration_contexts)

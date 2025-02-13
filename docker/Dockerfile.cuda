@@ -1,0 +1,34 @@
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu24.04
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHON_VERSION=3.12
+
+# Install Python and system dependencies
+RUN apt-get update && apt-get install -y \
+    python${PYTHON_VERSION} \
+    python3-pip \
+    wget \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install PyTorch with CUDA support
+RUN pip3 install --no-cache-dir torch torchvision torchaudio
+
+# Copy requirements first to leverage Docker cache
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Create temp_pdf directory as specified in research.config
+RUN mkdir -p ./temp_pdf
+
+# Copy application files
+COPY main.py .
+COPY research.config .
+
+# Expose FastAPI port
+EXPOSE 8000
+
+CMD ["python3", "main.py"]
