@@ -1,10 +1,10 @@
 # OpenDeepResearcher via Searxng 🧑‍🔬
 
-A robust research tool that uses AI to perform comprehensive research on any topic, offering flexible deployment through Docker, direct Python execution as OpenAI compatible endpoint with whatever frontend you like, or Jupyter notebooks.
+A robust research tool that uses AI to perform comprehensive research on any topic, offering flexible deployment through Docker, or simply direct Python execution as OpenAI compatible endpoint with whatever frontend you like, can also operate pure locally with [ollama](https://ollama.com) integration.
 
 ![OpenDeepResearcher](./demos/Demo.png)
 
-*A demo usage with [Msty](https://msty.app) as frontend, there is also a dedicated [manual](./README-for-Msty.md) for Msty settings.*
+*A demo usage using hybird model with [Msty](https://msty.app) as frontend, there is also a dedicated [manual](./README-for-Msty.md) for Msty settings.*
 
 ## 🚀 Docker/Python Setup (Recommended)
 
@@ -125,22 +125,22 @@ If you prefer using Jupyter notebooks directly:
 ### 1. Online Mode (Maximum Speed)
 - Uses OpenRouter API and Jina API for fastest performance
 - Notebooks:
-  - Basic: [open_deep_researcher.ipynb](open_deep_researcher.ipynb)
-  - With Planning: [open_deep_researcher_with_planning.ipynb](open_deep_researcher_with_planning.ipynb)
+  - Basic: [open_deep_researcher.ipynb](./jupyter-legacy/open_deep_researcher.ipynb)
+  - With Planning: [open_deep_researcher_with_planning.ipynb](./jupyter-legacy/open_deep_researcher_with_planning.ipynb)
 - Requirements: OpenRouter API key and Jina API key
 
 ### 2. Hybrid Mode (Speed/Privacy Balance)
 - Uses Ollama local models with Jina API
 - Notebooks:
-  - Basic: [local_open_deep_researcher.ipynb](local_open_deep_researcher.ipynb)
-  - With Planning: [local_open_deep_researcher_with_planning.ipynb](local_open_deep_researcher_with_planning.ipynb)
+  - Basic: [local_open_deep_researcher.ipynb](./jupyter-legacy/local_open_deep_researcher.ipynb)
+  - With Planning: [local_open_deep_researcher_with_planning.ipynb](./jupyter-legacy/local_open_deep_researcher_with_planning.ipynb)
 - Requirements: Ollama installation
 
 ### 3. Fully Local Mode (Maximum Privacy)
 - Uses Ollama models and Playwright for complete local operation
 - Notebooks:
-  - Basic: [local_open_deep_researcher_via_playwright.ipynb](local_open_deep_researcher_via_playwright.ipynb)
-  - With Planning: [local_open_deep_researcher_with_planning_via_playwright.ipynb](local_open_deep_researcher_with_planning.ipynb)
+  - Basic: [local_open_deep_researcher_via_playwright.ipynb](./jupyter-legacy/local_open_deep_researcher_via_playwright.ipynb)
+  - With Planning: [local_open_deep_researcher_with_planning_via_playwright.ipynb](./jupyter-legacy/local_open_deep_researcher_with_planning.ipynb)
 - Requirements: 
   - Chrome/Chromium with debug mode
   - Optional: reader-lm and docling for enhanced parsing
@@ -194,6 +194,7 @@ graph TB;
 - [x] Use Playwright and Ollama's reader-lm for 100% local service
 - [x] Make into a docker image for easy install
 - [ ] Refine process and reduce token usage via DSPy
+- [ ] Add more parsing methods with a decision agent to optimize per website extraction
 - [ ] Integrate tool calling
 - [ ] Add classifer models to fact-check sources
 
