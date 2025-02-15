@@ -4,7 +4,7 @@ A robust research tool that uses AI to perform comprehensive research on any top
 
 ![OpenDeepResearcher](./demos/Demo.png)
 
-*A demo usage using hybird model with [Msty](https://msty.app) as frontend, there is also a dedicated [manual](./README-for-Msty.md) for Msty settings.*
+*A demo usage using hybird(left)/online(right) model with [Msty](https://msty.app) as frontend, there is also a dedicated [manual](./README-for-Msty.md) for Msty settings.*
 
 ## 🚀 Docker/Python Setup (Recommended)
 
