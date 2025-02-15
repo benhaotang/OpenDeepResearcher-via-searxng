@@ -75,6 +75,13 @@ reason_model_ctx = -1
 - `chrome_host_ip`: Chrome host IP address (default: http://localhost, if you are not running with `--remote-debugging-address=0.0.0.0`, you need to change this to your local IP)
 - `use_embed_browser`: Use embedded Playwright browser instead of external Chrome (default: false)
 
+### [Ratelimits]
+- `request_per_minute`: Rate limit for default model (-1 to disable)
+- `operation_wait_time`: Wait time in seconds between research iterations (0 to disable)
+- `fallback_model`: Model to use when rate limited (e.g., google/gemini-2.0-flash-001). Should have:
+  * Large context length (100k+ recommended for pure online method, 32k+ for local)
+  * High tokens per minute limit
+
 ### [Parsing]
 - `temp_pdf_dir`: Directory for temporary PDF storage
 - `browse_lite`: Fast parsing mode without ML models (0/1)

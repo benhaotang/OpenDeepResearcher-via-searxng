@@ -45,6 +45,8 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
    # OR use a reliable public instance if you don't want to setup docker:
    # searxng_url = https://searx.perennialte.ch/search
    ```
+    > [!NOTE]
+    > If you want to use free models like gemini-experimental-xxx from google or on a lower usage tier, please set rate limits in research.config, read the troubleshooting section for more details.
 
 2. Setup Requirements:
    - For local models (if use_ollama = true):
@@ -197,7 +199,15 @@ graph TB;
 ## 💡 Troubleshooting
 
 - **RuntimeError with asyncio**: Install and apply `nest_asyncio`
-- **API Issues**: Verify API keys and rate limits
+- **API or Rate limit Issues**:
+  - Verify API keys and endpoints
+  - When hitting rate limits:
+    1. Set appropriate `request_per_minute` in research.config (-1 to disable)
+    2. Configure `fallback_model` with a model that has:
+       * Large context length (100k+ for online mode, 32k+ for local)
+       * High tokens per minute limits
+       * Example: google/gemini-2.0-flash-001
+    3. Add `operation_wait_time` between iterations if needed
 - **Jina URL resolve issue**: Wait and retry, usually due to high load
 - **Chrome/Browser**: Choose between external Chrome (use_jina = false, use_embed_browser = false) or embedded browser (use_embed_browser = true)
 - **SearXNG Access**: For local setup, verify port 4000 is available. Alternatively, use https://searx.perennialte.ch/ or another public instance that supports JSON output (test with `instance-url/search?q=test&format=json` to see if it returns JSON data or 403)

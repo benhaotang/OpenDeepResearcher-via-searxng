@@ -94,9 +94,9 @@ WITH_PLANNING = config.getboolean('Settings', 'with_planning')
 DEFAULT_MODEL = config.get('Settings', 'default_model')
 REASON_MODEL = config.get('Settings', 'reason_model')
 
-# ---------------------
-# Concurrency control
-# ---------------------
+# -------------------------------
+# Concurrency control for browser
+# -------------------------------
 concurrent_limit = config.getint('Concurrency', 'concurrent_limit')
 cool_down = config.getfloat('Concurrency', 'cool_down')
 CHROME_PORT = config.getint('Concurrency', 'chrome_port')
@@ -119,13 +119,42 @@ MAX_EVAL_TIME = config.getint('Parsing', 'max_eval_time')
 VERBOSE_WEB_PARSE = config.getboolean('Parsing', 'verbose_web_parse_detail')
 
 # ----------------------
+# Ratelimits
+# ----------------------
+REQUEST_PER_MINUTE = int(config.get('Ratelimits', 'request_per_minute', fallback=-1))  # -1 means no rate limiting
+OPERATION_WAIT_TIME = int(config.get('Ratelimits', 'operation_wait_time', fallback=0))  # 0 means no wait time
+FALLBACK_MODEL = config.get('Ratelimits', 'fallback_model', fallback=DEFAULT_MODEL)  # Use default model if no fallback specified
+
+
+# Rate limiting for OpenRouter/OpenAI compatible API
+openrouter_last_request_times = []  # Track request timestamps in the last 60s
+
+
+# ----------------------
 # Openrouter
 # ----------------------
-async def call_openrouter_async(session, messages, model=DEFAULT_MODEL):
+async def call_openrouter_async(session, messages, model=DEFAULT_MODEL, is_fallback=False):
     """
     Asynchronously call the OpenRouter/OpenAI compatible chat completion API with the provided messages.
     Returns the content of the assistant’s reply.
     """
+    global openrouter_last_request_times
+    # Apply rate limiting only for DEFAULT_MODEL and when REQUEST_PER_MINUTE is set
+    if model == DEFAULT_MODEL and REQUEST_PER_MINUTE > 0:
+            current_time = time.time()
+            # Remove requests older than 60 seconds
+            openrouter_last_request_times = [t for t in openrouter_last_request_times if current_time - t < 60]
+            
+            if len(openrouter_last_request_times) >= REQUEST_PER_MINUTE:
+                # Wait until we can make another request
+                oldest_time = openrouter_last_request_times[0]
+                wait_time = 60 - (current_time - oldest_time)
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+            
+            # Add current request time
+            openrouter_last_request_times.append(current_time)
+
     headers = {
         "Authorization": f"Bearer {OPENAI_COMPAT_API_KEY}",
         "X-Title": "OpenDeepResearcher, by Matt Shumer and Benhao Tang",
@@ -142,14 +171,23 @@ async def call_openrouter_async(session, messages, model=DEFAULT_MODEL):
                 try:
                     return result['choices'][0]['message']['content']
                 except (KeyError, IndexError) as e:
-                    print("Unexpected OpenRouter/OpenAI compatible response structure:", result)
-                    return None
+                    error_msg = f"Unexpected OpenRouter/OpenAI compatible response structure: {result}"
+                    print(error_msg)
+                    return f"Error: {error_msg}"
             else:
                 text = await resp.text()
-                print(f"OpenRouter/OpenAI compatible API error: {resp.status} - {text}")
-                return None
+                error_msg = f"OpenRouter/OpenAI compatible API error: {resp.status} - {text}"
+                print(error_msg)
+                # Check if this is a rate limit error and we're using the default model and not already a fallback
+                if not is_fallback and any(phrase in text.lower() for phrase in ["rate limit", "rate limits", "ratelimit","rate_limit","rate-limit"]):
+                    print(f"Rate limit hit, retrying with fallback model: {FALLBACK_MODEL}")
+                    # Retry with fallback model, marking as fallback to prevent recursion
+                    return await call_openrouter_async(session, messages, model=FALLBACK_MODEL, is_fallback=True)
+                if is_fallback and any(phrase in text.lower() for phrase in ["rate limit", "rate limits", "ratelimit","rate_limit","rate-limit"]):
+                    error_msg = "Rate limit hit even for fallback model, consider choosing a model with larger context length as fallback or other models/services."
+                return f"Error: {error_msg}"
     except Exception as e:
-        print("Error calling OpenRouter:", e)
+        print("Error calling OpenRouter/OpenAI compatible API:", e)
         return None
 
 # --------------------------
@@ -594,7 +632,7 @@ async def extract_relevant_context_async(session, user_query, search_query, page
         {"role": "user", "content": f"User Query: {user_query}\nSearch Query: {search_query}\n\nWeb URL: {page_url}\n\nWebpage Content (first 20000 characters):\n{page_text[:20000]}\n\n{prompt}"}
     ]
     response = await (call_ollama_async(session, messages, ctx=DEFAULT_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages))
-    if response:
+    if response and not response.strip().startswith("Error:"):
         return response.strip()
     return ""
 
@@ -653,17 +691,22 @@ async def generate_final_report_async(session, system_instruction, user_query, r
     """
     context_combined = "\n".join(all_contexts)
     prompt = (
-        "You are an expert researcher and report writer. Based on the gathered contexts below and the original query, "
+        "You are an expert researcher and report writer. Based on the gathered contexts above and the original query, "
         "write a comprehensive, well-structured, and detailed report that addresses the query thoroughly. "
         "Include all relevant insights and conclusions without extraneous commentary."
         "Math equations should use proper LaTeX syntax in markdown format, with \\(\\LaTeX{}\\) for inline, $$\\LaTeX{}$$ for block."
         "Properly cite all the VALID and REAL sources inline from 'Gathered Relevant Contexts' with [cite_number]"
-        "and add a corresponding bibliography list with their urls in markdown format in the end of your report."
-        "REMEMBER: NEVER make up sources or citations, only use the provided contexts, if no source, just write 'No available sources'."
+        "and also summarize the corresponding bibliography list with their urls in markdown format in the end of your report."
+        "Ensure that all VALID and REAL sources from 'Gathered Relevant Contexts' that you have used to write this report or back your"
+        "statements are properly cited inline using the [cite_number] format (e.g., [1], [2], etc.)."
+        "Then, append a complete bibliography section at the end of your report in markdown format, "
+        "listing each source with its corresponding URL. Please NEVER omit the bibliography."
+        "REMEMBER: NEVER make up sources or citations, only use the provided contexts, if no source used or available,"
+        "just write 'No available sources'."
     )
     messages = [
         {"role": "system", "content": "You are a skilled report writer." + (f"There is also some extra system instructions: {system_instruction}" if system_instruction else "")},
-        {"role": "user", "content": f"User Query: {user_query}\n\nGathered Relevant Contexts:\n{context_combined}" + (f"\n\nWriting plan from a planning agent:\n{report_planning}" if report_planning else "") + f"\n\nWriting Instructions:{prompt}"}
+        {"role": "user", "content": f"User Query: {user_query}\n\nGathered Relevant Contexts:\n{context_combined}" + (f"\n\nWriting plan from a planning agent:\n{report_planning}" if report_planning and not report_planning.startswith("Error:") else "") + f"\n\nWriting Instructions:{prompt}"}
     ]
     report = await (call_ollama_async(session, messages, ctx=DEFAULT_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages))
     return report
@@ -738,7 +781,7 @@ async def process_research(system_instruction: str, user_query: str, max_iterati
             research_plan = await make_initial_searching_plan_async(session, user_query)
             if isinstance(research_plan, list):
                 research_plan = ""
-            initial_query = "User Query:" + user_query + "\n\nResearch Plan:" + str(research_plan)
+            initial_query = "User Query:" + user_query + ("\n\nResearch Plan:" + str(research_plan) if research_plan and not research_plan.startswith("Error:") else "")
         else:
             research_plan = None
             initial_query = "User Query:" + user_query
@@ -799,6 +842,8 @@ async def process_research(system_instruction: str, user_query: str, max_iterati
                 all_search_queries.extend(new_search_queries)
 
             iteration += 1
+            if OPERATION_WAIT_TIME > 0:
+                await asyncio.sleep(OPERATION_WAIT_TIME)
 
         # Generate final report
         if WITH_PLANNING:
@@ -806,8 +851,13 @@ async def process_research(system_instruction: str, user_query: str, max_iterati
         else:
             final_report_planning = None
 
-        return await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
+        final_report= await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
 
+        if len(final_report) < 200:
+            final_report = final_report + "\n" + "We may encounter an error while writing, usually due to rate limit or context length.\n These are the original writing prompt, please copy it and try again with anothor model\n" + f"User Query: {user_query}\n\nGathered Relevant Contexts:\n" + "\n".join(aggregated_contexts) + (f"\n\nWriting plan from a planning agent:\n{final_report_planning}" if final_report_planning else "") + "You are an expert researcher and report writer. Based on the gathered contexts above and the original query, write a comprehensive, well-structured, and detailed report that addresses the query thoroughly."
+
+        return final_report
+    
 async def stream_research(system_instruction: str, user_query: str, max_iterations: int = 10, max_search_items: int = 4):
     """Generator function for streaming research results"""
     def create_chunk(content: str) -> str:
@@ -832,7 +882,7 @@ async def stream_research(system_instruction: str, user_query: str, max_iteratio
                 research_plan = ""
             if research_plan:
                 yield create_chunk(f"Initial Research Plan:\n{research_plan}\n\n")
-            initial_query = "User Query:" + user_query + "\n\nResearch Plan:" + str(research_plan)
+            initial_query = "User Query:" + user_query + ("\n\nResearch Plan:" + str(research_plan) if research_plan and not research_plan.startswith("Error:") else "")
         else:
             research_plan = None
             initial_query = "User Query:" + user_query
@@ -923,6 +973,8 @@ async def stream_research(system_instruction: str, user_query: str, max_iteratio
                     break
 
             iteration += 1
+            if OPERATION_WAIT_TIME > 0:
+                await asyncio.sleep(OPERATION_WAIT_TIME)
 
         yield create_chunk("\nGenerating final report...\n\n")
 
@@ -936,6 +988,8 @@ async def stream_research(system_instruction: str, user_query: str, max_iteratio
 
         yield create_chunk("\n</think>\n\n")
         final_report = await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
+        if len(final_report) < 200:
+            final_report = final_report + "\n\n" + "These are the writing prompt, please copy it and try again with anothor model\n\n---\n\n---\n\n" + f"User Query: {user_query}\n\nGathered Relevant Contexts:\n" + "\n\n".join(aggregated_contexts) + (f"\n\nWriting plan from a planning agent:\n{final_report_planning}" if final_report_planning else "") + "\n\nYou are an expert researcher and report writer. Based on the gathered contexts above and the original query, write a comprehensive, well-structured, and detailed report that addresses the query thoroughly.\n\n---\n\n---"
         yield create_chunk(final_report)
         yield "data: [DONE]\n\n"
 
