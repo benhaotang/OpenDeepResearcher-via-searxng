@@ -1,5 +1,8 @@
 Hi, today I will teach you guys how to have a OpenAI deep research-like service(can also operate 100% local) in Msty with my new open source project.
 
+> [!IMPORTANT]
+> **Please remember to turn off online model title auto generation when using this model!**
+
 # Pre-requisite
 
 First, please make sure you have git installed

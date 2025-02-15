@@ -45,8 +45,9 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
    # OR use a reliable public instance if you don't want to setup docker:
    # searxng_url = https://searx.perennialte.ch/search
    ```
-    > [!NOTE]
-    > If you want to use free models like gemini-experimental-xxx from google or on a lower usage tier, please set rate limits in research.config, read the troubleshooting section for more details.
+
+> [!TIP]
+> If you want to use **free models** like gemini-experimental-xxx from google or on a lower usage tier, please set rate limits in `research.config`, read the troubleshooting section for more details.
 
 2. Setup Requirements:
    - For local models (if use_ollama = true):
