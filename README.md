@@ -48,6 +48,7 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
 
 > [!TIP]
 > If you want to use **free models** like gemini-experimental-xxx from google or on a lower usage tier, please set rate limits in `research.config`, read the troubleshooting section for more details.
+> Follow [disscussion here](https://github.com/benhaotang/OpenDeepResearcher-via-searxng/discussions/10) to setup online mode with free gemini api.
 
 2. Setup Requirements:
    - For local models (if use_ollama = true):
