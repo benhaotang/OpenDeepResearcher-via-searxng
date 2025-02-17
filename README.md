@@ -112,6 +112,8 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
 
 For those who prefer a graphical interface and don't want to install a 3rd-party chat client, a simple Gradio-based UI is available in the `simple-webui` directory.
 
+![Gradio sample usage](./demo/gradio.png)
+
 To use the Gradio interface:
 1. Install dependencies:
    ```bash

@@ -1113,5 +1113,9 @@ async def list_models():
     )
 
 if __name__ == "__main__":
+    FastAPI_HOST = "0.0.0.0"
+    FastAPI_PORT = 8000
+    print("Set the address shown below to a chat client as an OpenAI completion endpoint, or lauch the gradio demo interface in simple_webui folder.")
+    print(f"Service will be running on http://{FastAPI_HOST}:{FastAPI_PORT}/v1")
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=FastAPI_HOST, port=FastAPI_PORT)
