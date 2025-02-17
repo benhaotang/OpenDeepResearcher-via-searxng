@@ -112,7 +112,7 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
 
 For those who prefer a graphical interface and don't want to install a 3rd-party chat client, a simple Gradio-based UI is available in the `simple-webui` directory.
 
-![Gradio sample usage](./demo/gradio.png)
+![Gradio sample usage](./demos/gradio.png)
 
 To use the Gradio interface:
 1. Install dependencies:
@@ -201,6 +201,7 @@ graph TB;
 - [x] Support Playwright and your own credentials to bypass publisher limits
 - [x] Use Playwright and Ollama's reader-lm for 100% local service
 - [x] Make into a docker image for easy install
+- [x] Add a simple Gradio interface for quick testing
 - [ ] Refine process and reduce token usage via DSPy
 - [ ] Add more parsing methods with a decision agent to optimize per website extraction
 - [ ] Integrate tool calling
