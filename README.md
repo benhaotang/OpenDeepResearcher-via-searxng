@@ -111,7 +111,7 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
     }'
   ```
 
-> [!INFO]
+> [!NOTE]
 > For advanced settings and configurations, please check [docker/README.md](./docker/README.md) for detailed instructions.
 
 ### 🖥️ Simple Gradio Interface to Test the Server Setup (Online Mode only)
