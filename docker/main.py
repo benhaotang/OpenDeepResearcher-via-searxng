@@ -853,8 +853,8 @@ async def process_research(system_instruction: str, user_query: str, max_iterati
 
         final_report= await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
 
-        if len(final_report) < 200:
-            final_report = final_report + "\n" + "We may encounter an error while writing, usually due to rate limit or context length.\n These are the original writing prompt, please copy it and try again with anothor model\n" + f"User Query: {user_query}\n\nGathered Relevant Contexts:\n" + "\n".join(aggregated_contexts) + (f"\n\nWriting plan from a planning agent:\n{final_report_planning}" if final_report_planning else "") + "You are an expert researcher and report writer. Based on the gathered contexts above and the original query, write a comprehensive, well-structured, and detailed report that addresses the query thoroughly."
+        if not final_report or len(final_report) < 200:
+            final_report = (final_report or "") + "\n" + "We may encounter an error while writing, usually due to rate limit or context length.\n These are the original writing prompt, please copy it and try again with anothor model\n" + f"User Query: {user_query}\n\nGathered Relevant Contexts:\n" + "\n".join(aggregated_contexts) + (f"\n\nWriting plan from a planning agent:\n{final_report_planning}" if final_report_planning else "") + "You are an expert researcher and report writer. Based on the gathered contexts above and the original query, write a comprehensive, well-structured, and detailed report that addresses the query thoroughly."
 
         return final_report
     
@@ -988,8 +988,8 @@ async def stream_research(system_instruction: str, user_query: str, max_iteratio
 
         yield create_chunk("\n</think>\n\n")
         final_report = await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
-        if len(final_report) < 200:
-            final_report = final_report + "\n\n" + "These are the writing prompt, please copy it and try again with anothor model\n\n---\n\n---\n\n" + f"User Query: {user_query}\n\nGathered Relevant Contexts:\n" + "\n\n".join(aggregated_contexts) + (f"\n\nWriting plan from a planning agent:\n{final_report_planning}" if final_report_planning else "") + "\n\nYou are an expert researcher and report writer. Based on the gathered contexts above and the original query, write a comprehensive, well-structured, and detailed report that addresses the query thoroughly.\n\n---\n\n---"
+        if not final_report or len(final_report) < 200:
+            final_report = (final_report or "") + "\n\n" + "These are the writing prompt, please copy it and try again with anothor model\n\n---\n\n---\n\n" + f"User Query: {user_query}\n\nGathered Relevant Contexts:\n" + "\n\n".join(aggregated_contexts) + (f"\n\nWriting plan from a planning agent:\n{final_report_planning}" if final_report_planning else "") + "\n\nYou are an expert researcher and report writer. Based on the gathered contexts above and the original query, write a comprehensive, well-structured, and detailed report that addresses the query thoroughly.\n\n---\n\n---"
         yield create_chunk(final_report)
         yield "data: [DONE]\n\n"
 

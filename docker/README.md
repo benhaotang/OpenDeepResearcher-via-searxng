@@ -148,33 +148,54 @@ The service provides an OpenAI-compatible endpoint at http://localhost:8000/v1
 
 ### Python Example:
 ```python
-import openai
+import requests
+import json
 
-openai.base_url = "http://localhost:8000/v1"
-openai.api_key = "your-key-here"  # From research.config
+# Setup API configuration
+base_url = "http://localhost:8000/v1"
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer sk-xxx"  # Default API key works for local endpoint
+}
 
-# Basic research query
-response = openai.chat.completions.create(
-    model="deep_researcher",
-    messages=[
+# Prepare request data
+data = {
+    "model": "deep_researcher",
+    "messages": [
         {"role": "system", "content": "Write in a formal tone."}, # Only writing instructions are supported now
         {"role": "user", "content": "Latest developments in quantum computing"}
     ],
-    stream=True,  # Enable live updates
-    max_iterations=10,  # Research depth (1-50)
-    max_search_items=4,  # Results per search (1-20, for use_jina=false)
+    "stream": True,  # Enable live updates
+    "max_iterations": 10,  # Research depth (1-50)
+    "max_search_items": 4  # Results per search (1-20, for use_jina=false)
+}
+
+# Make the API request
+response = requests.post(
+    f"{base_url}/chat/completions",
+    headers=headers,
+    json=data,
+    stream=True
 )
 
 # Stream the response
-for chunk in response:
-    print(chunk.choices[0].delta.content or "", end="")
+for line in response.iter_lines():
+    if not line:
+        continue
+    
+    if line.startswith(b"data: "):
+        try:
+            chunk = json.loads(line[6:])  # Skip "data: " prefix
+            if chunk.get("choices") and chunk["choices"][0].get("delta", {}).get("content"):
+                print(chunk["choices"][0]["delta"]["content"], end="")
+        except json.JSONDecodeError:
+            continue
 ```
 
 ### cURL Example:
 ```bash
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-key-here" \
   -d '{
     "model": "deep_researcher",
     "messages": [{"role": "user", "content": "Latest developments in quantum computing"}],

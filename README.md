@@ -97,26 +97,31 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
     - Chrome Debug: http://localhost:9222 (only needed if use_jina = false and use_embed_browser = false)
 
 5. Usage Example:
-   ```python
-   import openai
-   openai.base_url = "http://localhost:8000/v1"
-   
-   response = openai.chat.completions.create(
-       model="deep_researcher",
-       messages=[{"role": "user", "content": "What is quantum computing?"}],
-       # System messages can also be added, but it only affects the final writing style
-       # Research control parameters
-       max_iterations=10,  # Control research depth (1-50)
-       max_search_items=4,  # Results per search (1-20), only for use_jina = false
-       stream=True,  # Enable streaming for live updates
-       # Optional: Override models from config
-       default_model="anthropic/claude-3.5-haiku",
-       reason_model="deepseek/deepseek-r1-distill-qwen-32b"
-   )
-   
-   # Stream output
-   for chunk in response:
-       print(chunk.choices[0].delta.content or "", end="")
+   ```bash
+   curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deep_researcher",
+    "messages": [{"role": "user", "content": "Latest developments in quantum computing"}],
+    "stream": true,
+    "max_iterations": 10
+    }'
+   ```
+
+### 🖥️ Simple Gradio Interface to Test the Server Setup (Online Mode only)
+
+For those who prefer a graphical interface and don't want to install a 3rd-party chat client, a simple Gradio-based UI is available in the `simple-webui` directory.
+
+To use the Gradio interface:
+1. Install dependencies:
+   ```bash
+   cd simple-webui
+   pip install -r requirements.txt
+   ```
+2. Make sure the OpenDeepResearcher API is running either by Docker or Python.
+3. Start the interface:
+   ```bash
+   python gradio_online_mode.py
    ```
 
 ## 📓 Jupyter Notebook Setup (Alternative, obsolete soon)
@@ -217,11 +222,11 @@ graph TB;
 
 ## Price prediction
 
-- If you use the online mode, the cost is around \$0.1 to \$0.5 for simple reports in minutes or up to \$2 for complex reports in up to an hour. (Using Gemini 2.0 Flash paid version as reference, claude and o3-mini will be much expensive)
-- If you use the hybrid mode, the cost is around \$0.01 to \$0.1 for even most comprehensive reports. But please ensure you have enough context length for the models to work with, recommend at least 32k tokens.
+- If you use the online mode, the cost is around $0.1 to $0.5 for simple reports in minutes or up to $2 for complex reports in up to an hour. (Using Gemini 2.0 Flash paid version as reference, claude and o3-mini will be much expensive)
+- If you use the hybrid mode, the cost is around $0.01 to $0.1 for even most comprehensive reports. But please ensure you have enough context length for the models to work with, recommend at least 32k tokens.
 - If you use the fully local mode, the generation time will be a lot longer, for a 5 interation 4 search items report, it will take around 1 hour on my RX 7800 XT.
 
-My example, a 8-pages proceeding style physics report going through 573 sources using online method took 51 min at €1.4 with Gemini 2.0 Flash(via openrouter) and Jina.
+My example, an 8-pages proceeding style physics report going through 573 sources using online method took 51 min at €1.4 with Gemini 2.0 Flash(via openrouter) and Jina.
 
 Of course, the above is if you don't count electricity bill.
 
