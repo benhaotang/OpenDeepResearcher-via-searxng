@@ -99,13 +99,13 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
 5. Usage Example:
    ```bash
    curl http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deep_researcher",
-    "messages": [{"role": "user", "content": "Latest developments in quantum computing"}],
-    "stream": true,
-    "max_iterations": 10
-    }'
+     -H "Content-Type: application/json" \
+     -d '{
+       "model": "deep_researcher",
+       "messages": [{"role": "user", "content": "Latest developments in quantum computing"}],
+       "stream": true,
+       "max_iterations": 10
+       }'
    ```
 
 ### 🖥️ Simple Gradio Interface to Test the Server Setup (Online Mode only)
