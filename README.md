@@ -97,16 +97,22 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
     - Chrome Debug: http://localhost:9222 (only needed if use_jina = false and use_embed_browser = false)
 
 5. Usage Example:
-   ```bash
-   curl http://localhost:8000/v1/chat/completions \
-     -H "Content-Type: application/json" \
-     -d '{
-       "model": "deep_researcher",
-       "messages": [{"role": "user", "content": "Latest developments in quantum computing"}],
-       "stream": true,
-       "max_iterations": 10
-       }'
-   ```
+  ```bash
+  curl http://localhost:8000/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "deep_researcher",
+      "messages": [{"role": "user", "content": "Latest developments in quantum computing"}],
+      "stream": true,
+      "max_iterations": 10,  # Research depth (>1)
+      "max_search_items": 4,  # Results per search (>1, for use_jina=false)
+      "default_model": "anthropic/claude-3.5-haiku", # Optional: Override default model
+      "reason_model": "deepseek/deepseek-r1-distill-qwen-32b" # Optional: Override reasoning model
+    }'
+  ```
+
+> [!INFO]
+> For advanced settings and configurations, please check [docker/README.md](./docker/README.md) for detailed instructions.
 
 ### 🖥️ Simple Gradio Interface to Test the Server Setup (Online Mode only)
 

@@ -166,8 +166,10 @@ data = {
         {"role": "user", "content": "Latest developments in quantum computing"}
     ],
     "stream": True,  # Enable live updates
-    "max_iterations": 10,  # Research depth (1-50)
-    "max_search_items": 4  # Results per search (1-20, for use_jina=false)
+    "max_iterations": 10,  # Research depth (>1)
+    "max_search_items": 4,  # Results per search (>1, for use_jina=false)
+    "default_model": "anthropic/claude-3.5-haiku", # Optional: Override default model
+    "reason_model": "deepseek/deepseek-r1-distill-qwen-32b" # Optional: Override reasoning model
 }
 
 # Make the API request
@@ -200,7 +202,10 @@ curl http://localhost:8000/v1/chat/completions \
     "model": "deep_researcher",
     "messages": [{"role": "user", "content": "Latest developments in quantum computing"}],
     "stream": true,
-    "max_iterations": 10
+    "max_iterations": 10,  # Research depth (>1)
+    "max_search_items": 4,  # Results per search (>1, for use_jina=false)
+    "default_model": "anthropic/claude-3.5-haiku", # Optional: Override default model
+    "reason_model": "deepseek/deepseek-r1-distill-qwen-32b" # Optional: Override reasoning model
   }'
 ```
 
