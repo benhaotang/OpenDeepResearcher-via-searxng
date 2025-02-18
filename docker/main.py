@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
+from agent import process_link_dspy
 
 # FastAPI app
 app = FastAPI(title="Deep Researcher API")
@@ -91,6 +92,7 @@ BASE_SEARXNG_URL = config.get('API', 'searxng_url')
 USE_OLLAMA = config.getboolean('Settings', 'use_ollama')
 USE_JINA = config.getboolean('Settings', 'use_jina')
 WITH_PLANNING = config.getboolean('Settings', 'with_planning')
+USE_DSPY = config.getboolean('Settings', 'use_dspy')
 DEFAULT_MODEL = config.get('Settings', 'default_model')
 REASON_MODEL = config.get('Settings', 'reason_model')
 
@@ -723,7 +725,7 @@ async def process_link(session, link, user_query, search_query, create_chunk=Non
         print(status_msg)
 
     try:
-        # Create fetch task immediately
+        # Create fetch task immediately to maintain concurrency
         fetch_task = asyncio.create_task(fetch_webpage_text_async(session, link))
         
         # Wait for fetch to complete
@@ -731,10 +733,38 @@ async def process_link(session, link, user_query, search_query, create_chunk=Non
         if not page_text:
             return
 
-        # Create usefulness task immediately
+        # Use dspy-based processing if enabled
+        if USE_DSPY:
+            # Stream usefulness decision and reasoning first
+            status_msg = f"Processing {link} with dspy...\n\n"
+            if create_chunk:
+                yield create_chunk(status_msg)
+            else:
+                print(status_msg)
+            
+            async for result in process_link_dspy(session, link, user_query, search_query, page_text, create_chunk):
+                if isinstance(result, tuple) and len(result) == 3:  # (usefulness, reason, context)
+                    usefulness, reason, context = result
+                    # Show usefulness decision and reasoning
+                    status_msg = f"Page usefulness for {link}: {usefulness}\nReason: {reason}\n\n"
+                    if create_chunk:
+                        yield create_chunk(status_msg)
+                    else:
+                        print(status_msg)
+                    
+                    # If useful, show and yield the context
+                    if usefulness == "Yes" and context:
+                        status_msg = f"Extracted context from {link} (first 200 chars): {context[:200]}\n\n"
+                        if create_chunk and VERBOSE_WEB_PARSE:
+                            yield create_chunk(status_msg)
+                        else:
+                            print(status_msg)
+                        context_with_url = "url:" + link + "\ncontext:" + context
+                        yield context_with_url
+            return
+
+        # Original processing flow
         usefulness_task = asyncio.create_task(is_page_useful_async(session, user_query, page_text, link))
-        
-        # Create context task but don't await it yet
         context_task = asyncio.create_task(extract_relevant_context_async(session, user_query, search_query, page_text, link))
         
         # Wait for usefulness check and stream its result
