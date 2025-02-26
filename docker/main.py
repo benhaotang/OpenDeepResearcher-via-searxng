@@ -169,7 +169,12 @@ async def call_openrouter_async(session, messages, model=DEFAULT_MODEL, is_fallb
             if resp.status == 200:
                 result = await resp.json()
                 try:
-                    return result['choices'][0]['message']['content']
+                    content = result['choices'][0]['message']['content']
+                    # If content is empty and not using fallback, retry with fallback model
+                    if (not content or content.strip() == "") and not is_fallback:
+                        print(f"Empty response from model, retrying with fallback model: {FALLBACK_MODEL}")
+                        return await call_openrouter_async(session, messages, model=FALLBACK_MODEL, is_fallback=True)
+                    return content
                 except (KeyError, IndexError) as e:
                     error_msg = f"Unexpected OpenRouter/OpenAI compatible response structure: {result}"
                     print(error_msg)
@@ -179,12 +184,12 @@ async def call_openrouter_async(session, messages, model=DEFAULT_MODEL, is_fallb
                 error_msg = f"OpenRouter/OpenAI compatible API error: {resp.status} - {text}"
                 print(error_msg)
                 # Check if this is a rate limit error and we're using the default model and not already a fallback
-                if not is_fallback and any(phrase in text.lower() for phrase in ["rate limit", "rate limits", "ratelimit","rate_limit","rate-limit"]):
-                    print(f"Rate limit hit, retrying with fallback model: {FALLBACK_MODEL}")
+                if not is_fallback and any(phrase in text.lower() for phrase in ["rate limit", "rate limits", "ratelimit","rate_limit","rate-limit","context length", "context-length","max tokens","max_tokens"]):
+                    print(f"Rate limit/Context length hit, retrying with fallback model: {FALLBACK_MODEL}")
                     # Retry with fallback model, marking as fallback to prevent recursion
                     return await call_openrouter_async(session, messages, model=FALLBACK_MODEL, is_fallback=True)
-                if is_fallback and any(phrase in text.lower() for phrase in ["rate limit", "rate limits", "ratelimit","rate_limit","rate-limit"]):
-                    error_msg = "Rate limit hit even for fallback model, consider choosing a model with larger context length as fallback or other models/services."
+                if is_fallback and any(phrase in text.lower() for phrase in ["rate limit", "rate limits", "ratelimit","rate_limit","rate-limit","context length", "context-length","max tokens","max_tokens"]):
+                    error_msg = "Rate limit hit/Context length hit even for fallback model, consider choosing a model with larger context length as fallback or other models/services."
                 return f"Error: {error_msg}"
     except Exception as e:
         print("Error calling OpenRouter/OpenAI compatible API:", e)
