@@ -16,7 +16,7 @@ DEFAULT_MODEL = config.get('Settings', 'default_model')
 # Initialize dspy based on configuration
 if USE_OLLAMA:
     # Use Ollama for local inference
-    lm = dspy.LM('ollama_chat/supernova', api_base=OLLAMA_BASE_URL, api_key='')
+    lm = dspy.LM('ollama_chat/' + DEFAULT_MODEL, api_base=OLLAMA_BASE_URL, api_key='')
 else:
     # Use OpenRouter/OpenAI compatible API
     lm = dspy.LM('openai/' + DEFAULT_MODEL, api_key=OPENAI_COMPAT_API_KEY, api_base=OPENAI_URL)
