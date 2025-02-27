@@ -189,6 +189,56 @@ graph TB;
     style F fill:#ccf,stroke:#333,stroke-width:2px
 ```
 
+### Handling Large Context in Limited Context Window
+
+```mermaid
+graph TB
+    subgraph Input
+    A[Large Context]
+    end
+
+    subgraph "Context Processing"
+    B[Split Into Chunks]
+    C1[Process Chunk 1]
+    C2[Process Chunk 2]
+    C3[Process Chunk N]
+    D[Combine Notes/Comments]
+    end
+
+    subgraph "Iterative Refinement"
+    E1[Search Planning]
+    E2[Writing Planning]
+    F1[Generate Queries/Next Steps]
+    F2[Refine Writing Plan]
+    G1[Final Search Decision]
+    G2[Final Report Writing]
+    end
+
+    A --> B
+    B --> C1
+    B --> C2
+    B --> C3
+    C1 --> D
+    C2 --> D
+    C3 --> D
+
+    D --> E1
+    D --> E2
+    E1 --> F1
+    E2 --> F2
+    F1 --> G1
+    F2 --> G2
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style G1 fill:#ccf,stroke:#333,stroke-width:2px
+    style G2 fill:#ccf,stroke:#333,stroke-width:2px
+
+    classDef chunk fill:#fcf,stroke:#333,stroke-width:1px
+    class C1,C2,C3 chunk
+    classDef process fill:#cfc,stroke:#333,stroke-width:1px
+    class B,D,E1,E2,F1,F2 process
+```
+
 ## ⚙️ Core Components
 
 - **SearXNG**: Private, unbiased search:
