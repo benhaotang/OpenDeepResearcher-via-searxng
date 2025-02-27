@@ -1,5 +1,5 @@
 import dspy
-from typing import Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator, List
 import aiohttp
 import configparser
 
@@ -22,6 +22,26 @@ else:
     lm = dspy.LM('openai/' + DEFAULT_MODEL, api_key=OPENAI_COMPAT_API_KEY, api_base=OPENAI_URL)
 
 dspy.configure(lm=lm)
+
+class ReportInstructionExtraction(dspy.Signature):
+    """
+    Extract components from a natural language instruction for generating a report.
+
+    This extraction includes:
+      - writing_style: instructions for the writing style,
+      - searching_instruction: guidance on how to search,
+      - local_doc_dir: local directory for documents,
+      - online_url_include: list of online URLs to include,
+      - online_url_avoid: list of online URLs to avoid,
+      - main_query: the primary query to search for.
+    """
+    instruction: str = dspy.InputField(desc="A natural language instruction that includes all necessary details")
+    writing_style: str = dspy.OutputField(desc="Writing style instruction (e.g., formal, informal, technical)")
+    searching_instruction: str = dspy.OutputField(desc="Instructions on how to perform the search (e.g., search keywords, filters)")
+    local_doc_dir: str = dspy.OutputField(desc="Local document directory path to be used for reference")
+    online_url_include: List[str] = dspy.OutputField(desc="List of online URLs that must be included in the search")
+    online_url_avoid: List[str] = dspy.OutputField(desc="List of online URLs to avoid in the search")
+    main_query: str = dspy.OutputField(desc="The primary search query")
 
 class WebpageAnalyzer(dspy.Signature):
     """Analyze webpage content for usefulness and extract relevant information."""
@@ -78,3 +98,16 @@ async def is_page_useful_dspy(session: aiohttp.ClientSession, user_query: str, p
         page_content=page_text[:20000]
     )
     return ("Yes" if result.is_useful else "No", result.reason)
+
+async def extract_report_instructions_async(session: aiohttp.ClientSession, system_message: str) -> Optional[ReportInstructionExtraction]:
+    """
+    Extract report components from a system message using dspy.
+    Returns the extracted ReportInstructionExtraction object or None if extraction fails.
+    """
+    try:
+        extractor = dspy.Predict(ReportInstructionExtraction)
+        result = extractor(instruction=system_message)
+        return result
+    except Exception as e:
+        print(f"Error extracting report instructions: {e}")
+        return None
