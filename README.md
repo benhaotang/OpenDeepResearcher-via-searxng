@@ -47,8 +47,9 @@ The setup provides an OpenAI-compatible API endpoint with flexible configuration
    ```
 
 > [!TIP]
-> If you want to use **free models** like gemini-experimental-xxx from google or on a lower usage tier, please set rate limits in `research.config`, read the troubleshooting section for more details.
-> Follow [disscussion here](https://github.com/benhaotang/OpenDeepResearcher-via-searxng/discussions/10) to setup online mode with free gemini api.
+> - If you want to use **free models** like gemini-experimental-xxx from google or on a lower usage tier, please set rate limits in `research.config`, read the troubleshooting section for more details.
+>   Follow [disscussion here](https://github.com/benhaotang/OpenDeepResearcher-via-searxng/discussions/10) to setup online mode with free gemini api.
+> - To use with Claude but get a max input token limit? Use experimental branch [feat-fit-more-tokens](https://github.com/benhaotang/OpenDeepResearcher-via-searxng/tree/feat-fit-more-tokens) in PR[#12](https://github.com/benhaotang/OpenDeepResearcher-via-searxng/pull/12)
 
 2. Setup Requirements:
    - For local models (if use_ollama = true):
