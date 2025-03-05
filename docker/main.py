@@ -93,6 +93,8 @@ USE_JINA = config.getboolean('Settings', 'use_jina')
 WITH_PLANNING = config.getboolean('Settings', 'with_planning')
 DEFAULT_MODEL = config.get('Settings', 'default_model')
 REASON_MODEL = config.get('Settings', 'reason_model')
+DEFAULT_MODEL_MAX_INPUT = config.getint('Settings', 'default_model_max_input', fallback=-1) # -1 means we don't account for max input limits
+REASON_MODEL_MAX_INPUT = config.getint('Settings', 'reason_model_max_input', fallback=-1) # -1 means we don't account for max input limits
 
 # -------------------------------
 # Concurrency control for browser
@@ -124,6 +126,57 @@ VERBOSE_WEB_PARSE = config.getboolean('Parsing', 'verbose_web_parse_detail')
 REQUEST_PER_MINUTE = int(config.get('Ratelimits', 'request_per_minute', fallback=-1))  # -1 means no rate limiting
 OPERATION_WAIT_TIME = int(config.get('Ratelimits', 'operation_wait_time', fallback=0))  # 0 means no wait time
 FALLBACK_MODEL = config.get('Ratelimits', 'fallback_model', fallback=DEFAULT_MODEL)  # Use default model if no fallback specified
+
+# ----------------------
+# Token Estimation
+# ----------------------
+def estimate_tokens(text):
+    """
+    Estimate the number of tokens in a text string.
+    This is a rough approximation: ~4 characters per token for English text.
+    """
+    return len(text) // 4  # Simple approximation
+
+# Constants for prompt overhead estimation
+JUDGE_PROMPT_OVERHEAD = 1500  # Conservative estimate for judge function prompt overhead
+SEARCH_PROMPT_OVERHEAD = 1200  # Conservative estimate for search queries function prompt overhead
+WRITING_PROMPT_OVERHEAD = 1800  # Conservative estimate for writing plan function prompt overhead
+REPORT_PROMPT_OVERHEAD = 2000  # Conservative estimate for final report function prompt overhead
+
+def split_contexts_into_chunks(contexts, max_tokens, prompt_overhead):
+    """
+    Split a list of context items into chunks that fit within the token limit.
+    
+    Args:
+        contexts: List of context strings to split
+        max_tokens: Maximum tokens allowed per chunk
+        prompt_overhead: Estimated tokens used by the prompt
+        
+    Returns:
+        List of context chunks, where each chunk is a joined string of context items
+    """
+    available_tokens = max_tokens - prompt_overhead
+    chunks = []
+    current_chunk = []
+    current_chunk_tokens = 0
+    
+    for item in contexts:
+        item_tokens = estimate_tokens(item)
+        if current_chunk_tokens + item_tokens > available_tokens and current_chunk:
+            # Current chunk is full, start a new one
+            chunks.append("\n".join(current_chunk))
+            current_chunk = [item]
+            current_chunk_tokens = item_tokens
+        else:
+            # Add to current chunk
+            current_chunk.append(item)
+            current_chunk_tokens += item_tokens
+    
+    # Add the last chunk if it's not empty
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+    
+    return chunks
 
 
 # Rate limiting for OpenRouter/OpenAI compatible API
@@ -444,15 +497,15 @@ async def make_initial_searching_plan_async(session, user_query):
             print(f"Error processing response: {e}")
     return []
 
-async def judge_search_result_and_future_plan_aync(session, user_query, original_plan, context_combined):
+async def judge_search_result_and_future_plan_aync(session, user_query, original_plan, context_combined, truncated=False, note_from_previous=""):
     """
     Ask the reasoning LLMs to judge the result of the search attempt and produce a plan for next interation.
     """
-    prompt = (
+    base_prompt = (
     "You are an advanced reasoning LLM that specializes in evaluating research results and refining search strategies. "
-    "Your task is to analyze the search agent’s findings, assess their relevance and completeness, "
+    "Your task is to analyze the search agent's findings, assess their relevance and completeness, "
     "and generate a structured plan for the next search iteration. Your goal is to ensure a thorough and efficient research process "
-    "that ultimately provides a comprehensive answer to the user’s query. But still, if you think everything is enough, you can tell search agent to stop\n"
+    "that ultimately provides a comprehensive answer to the user's query. But still, if you think everything is enough, you can tell search agent to stop\n"
     "Process:\n"
     "1. **Evaluate Search Results:**\n"
     "   - Analyze the retrieved search results to determine their relevance, credibility, and completeness.\n"
@@ -467,12 +520,31 @@ async def judge_search_result_and_future_plan_aync(session, user_query, original
     "   - Provide a structured step-by-step plan for the next search iteration.\n"
     "   - Clearly outline what aspects need further investigation and where the search agent should focus next.\n"
     "NO EXPLANATIONS, write plans ONLY!\n"
-    "Now, based on the above information and instruction, evaluate the search results and generate a refined research plan for the next iteration."
     )
+
+    if truncated:
+        prompt = base_prompt + (
+            f"\n{note_from_previous}\n"
+            f"User Query: {user_query}\n"
+            f"Original Research Plan: {original_plan}\n"
+            "IMPORTANT: Due to context length limit, you can only see a part of the full context at a time, and this is only a partial context." "Please add comments on how well this part addresses the query, "
+            "what issues remain unresolved, and what needs further clarification. These comments will be used when "
+            "finally reviewing all parts of the context together. Note: since the final review agent will ONLY see your comments, make sure to provide a clear and detailed assessment."
+        )
+    elif note_from_previous:
+        prompt = base_prompt + (
+            "\nDue to context length limit, the gathered context analysis is done by seeing a small part of the full context at a time. "
+            f"\nBased on the previous analysis comments of different parts of the context:\n{note_from_previous}\n"
+            f"User Query: {user_query}\n"
+            f"Original Research Plan: {original_plan}\n"
+            "Now, synthesize these comments to generate a comprehensive research plan for the next iteration."
+        )
+    else:
+        prompt = base_prompt + "Now, based on the above information and instruction, evaluate the search results and generate a refined research plan for the next iteration."
 
     messages = [
         {"role": "system", "content": "You are an advanced reasoning LLM that guides a following search agent to search for relevant information for a research."},
-        {"role": "user", "content": f"User Query: {user_query}\n\n Original Research Plan: {original_plan} \n\nExtracted Relevant Contexts by the search agent:\n{context_combined} \n\n{prompt}"}
+        {"role": "user", "content": f"User Query: {user_query}\n\n Original Research Plan: {original_plan} \n\n" + (f"Extracted Relevant Contexts by the search agent:\n{context_combined}" if context_combined else "") + f"\n\n{prompt}"}
     ]
     response = await (call_ollama_async(session, messages, model=REASON_MODEL, ctx=REASON_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages, model=REASON_MODEL))
     if response:
@@ -485,11 +557,11 @@ async def judge_search_result_and_future_plan_aync(session, user_query, original
             print(f"Error processing response: {e}")
     return []
 
-async def generate_writing_plan_aync(session, user_query, aggregated_contexts):
+async def generate_writing_plan_aync(session, user_query, aggregated_contexts, truncated=False, note_from_previous=""):
     """
     Ask the reasoning LLM to generate a structured writing plan for the final report based on the aggregated research findings.
     """
-    prompt = (
+    base_prompt = (
         "You are an advanced reasoning LLM that specializes in structuring comprehensive research reports. "
         "Your task is to analyze the aggregated research findings from previous searches and generate a structured plan "
         "for writing the final report. The goal is to ensure that the report is well-organized, complete, and effectively presents the findings.\n\n"
@@ -507,8 +579,40 @@ async def generate_writing_plan_aync(session, user_query, aggregated_contexts):
         "   - Recommend how to synthesize multiple sources into a coherent narrative.\n"
         "   - If any section lacks sufficient information, indicate where additional elaboration may be needed.\n\n"
         "NO EXPLANATIONS, write plans ONLY!\n"
-        "Now, based on the above instructions, generate a structured plan for writing the final research report.\n"
     )
+    
+    if truncated:
+        if note_from_previous:
+            # This is a subsequent iteration with a previous plan
+            prompt = base_prompt + (
+                f"User Query: {user_query}\n\n"
+                f"Previous Writing Plan:\n{note_from_previous}\n\n"
+                "Due to context length limit, you can only see a part of the full context at a time. "
+                "This is a previous version of the writing plan generated with previous parts of the full context."
+                "Now you have new part of the full context, please update and refine this plan "
+                "based on the additional information provided. Generate a complete, updated writing plan.\n"
+            )
+        else:
+            # This is the first iteration
+            prompt = base_prompt + (
+                f"User Query: {user_query}\n\n"
+                "Due to context length limit, you can only see a part of the full context at a time. "
+                "This is the first part of the context. Generate a complete writing plan based on this initial information. "
+                "This plan will be refined later with new context.\n"
+            )
+    else:
+        if note_from_previous:
+            # This is a finial iteration with a previous plan
+            prompt = base_prompt + (
+                f"User Query: {user_query}\n\n"
+                f"Previous Writing Plan:\n{note_from_previous}\n\n"
+                "Due to context length limit, you can only see a part of the full context at a time. "
+                "This is a previous version of the writing plan generated with previous parts of the full context."
+                "Now you have the FINAL part of the full context, please update and refine this plan "
+                "based on the additional information provided. Generate a complete, updated FINAL writing plan.\n"
+            )
+        else:
+            prompt = base_prompt + ("Now, based on the above instructions, generate a structured plan for writing the final research report.\n")
 
     messages = [
         {"role": "system", "content": "You are an advanced reasoning LLM that structures research findings into a well-organized final report."},
@@ -642,26 +746,55 @@ async def extract_relevant_context_async(session, user_query, search_query, page
     return ""
 
 
-async def get_new_search_queries_async(session, user_query, new_research_plan, previous_search_queries, all_contexts):
+async def get_new_search_queries_async(session, user_query, new_research_plan, previous_search_queries, all_contexts, truncated=False, note_from_previous=""):
     """
     Based on the original query, the previously used search queries, and all the extracted contexts,
     ask the LLM whether additional search queries are needed. If yes, return a Python list of up to four queries;
     if the LLM thinks research is complete, it should return "<done>".
     """
     context_combined = "\n".join(all_contexts)
-    prompt = (
+    
+    base_prompt = (
         "You are an analytical research assistant. Based on the original query, the search queries performed so far, "
         "the next step plan by a planning agent and the extracted contexts from webpages, determine if further research is needed. "
+    )
+    
+    if truncated:
+        prompt = base_prompt + (
+            f"\n{note_from_previous}\n"
+            f"User Query: {user_query}\n"
+            f"Previous Search Queries: {previous_search_queries}\n"
+            + (f"Next Research Plan by planning agent:\n{new_research_plan}\n" if new_research_plan else "")
+            + "IMPORTANT: Due to context length limit, you can only see a part of the full context at a time. "
+            + "so this is only a partial context. Please add comments on how well this part addresses the query, "
+            "what issues remain unresolved, and what needs further clarification. These comments will be used when "
+            "reviewing all parts of the context together."
+        )
+    elif note_from_previous:
+        prompt = base_prompt + (
+            "Due to context length limit, you can only see part of the full context at a time, "
+            "so you were previously asked to provide analysis comments on each parts of the full context provided. "
+            + f"\nBased on those previous analysis comments of different parts of the context:\n{note_from_previous}\n"
+            f"User Query: {user_query}\n"
+            f"Previous Search Queries: {previous_search_queries}\n"
+            + (f"Next Research Plan by planning agent:\n{new_research_plan}\n" if new_research_plan else "")
+            + "Now, synthesize these comments to determine if further research is needed."
+            + "If further research is needed, ONLY provide up to four new search queries as a Python list IN ONE LINE (for example, "
+            + "['new query1', 'new query2']) in PLAIN text, NEVER wrap in code env. If you believe no further research is needed, respond with exactly <done>."
+            + "\nREMEMBER: Output ONLY a Python list or the token <done> WITHOUT any additional text or explanations."
+        )
+    else:
+        prompt = base_prompt + (
         "If further research is needed, ONLY provide up to four new search queries as a Python list IN ONE LINE (for example, "
         "['new query1', 'new query2']) in PLAIN text, NEVER wrap in code env. If you believe no further research is needed, respond with exactly <done>."
         "\nREMEMBER: Output ONLY a Python list or the token <done> WITHOUT any additional text or explanations."
     )
     messages = [
         {"role": "system", "content": "You are a systematic research planner."},
-        {"role": "user", "content": f"User Query: {user_query}\nPrevious Search Queries: {previous_search_queries}\n\nExtracted Relevant Contexts:\n{context_combined}"+(f"\n\nNext Research Plan by planning agent:\n{new_research_plan}" if new_research_plan else "")+f"\n\n{prompt}"}
+        {"role": "user", "content": f"User Query: {user_query}\nPrevious Search Queries: {previous_search_queries}\n" + (f"\nExtracted Relevant Contexts:\n{context_combined}" if context_combined else "") + (f"\n\nNext Research Plan by planning agent:\n{new_research_plan}" if new_research_plan else "") + f"\n\n{prompt}"}
     ]
     response = await (call_ollama_async(session, messages, ctx=DEFAULT_MODEL_CTX) if USE_OLLAMA else call_openrouter_async(session, messages))
-    if response:
+    if response and not truncated:
         cleaned = response.strip()
         if cleaned == "<done>":
             return "<done>"
@@ -686,16 +819,18 @@ async def get_new_search_queries_async(session, user_query, new_research_plan, p
                     return []
             print("Error parsing new search queries:", e, "\nResponse:", response)
             return []
+    elif response and truncated:
+        return response
     return []
 
 
 
-async def generate_final_report_async(session, system_instruction, user_query, report_planning, all_contexts):
+async def generate_final_report_async(session, system_instruction, user_query, report_planning, all_contexts, truncated=False, note_from_previous=""):
     """
     Generate the final comprehensive report using all gathered contexts.
     """
     context_combined = "\n".join(all_contexts)
-    prompt = (
+    base_prompt = (
         "You are an expert researcher and report writer. Based on the gathered contexts above and the original query, "
         "write a comprehensive, well-structured, and detailed report that addresses the query thoroughly. "
         "Include all relevant insights and conclusions without extraneous commentary."
@@ -709,6 +844,46 @@ async def generate_final_report_async(session, system_instruction, user_query, r
         "REMEMBER: NEVER make up sources or citations, only use the provided contexts, if no source used or available,"
         "just write 'No available sources'."
     )
+    
+    if truncated:
+        if note_from_previous:
+            # This is a subsequent iteration with a previous report
+            prompt = base_prompt + (
+                f"\nUser Query: {user_query}\n\n"
+                f"Previous Report Draft:\n{note_from_previous}\n\n"
+                "Due to context length limit, you can only see a part of the full context at a time. "
+                "Previous Report Draft is a previous version of the report written by you based on some parts of the full context you cannot see anymore. "
+                "But those parts are still valid and should be considered as correct."
+                "Now you have a new part of the full context, please update and refine this report"
+                "based on the additional information provided. Generate a complete, updated report that incorporates both "
+                "the previous content and the new information. Ensure all citations are properly kept, maintained, and updated."
+            )
+        else:
+            # This is the first iteration
+            prompt = base_prompt + (
+                f"\nUser Query: {user_query}\n\n"
+                "Due to context length limit, you can only see a part of the full context at a time. "
+                "This is the first part of the full context. Generate a complete report based on this initial information. "
+                "This report will be refined later with further context. Ensure you also include the complete citation list, as the refinement agent will not see them any more."
+            )
+    else:
+        if note_from_previous:
+            # This is the final report generation
+            prompt = base_prompt + (
+                f"\nUser Query: {user_query}\n\n"
+                f"Previous Report Draft:\n{note_from_previous}\n\n"
+                "Due to context length limit, you can only see a part of the full context at a time. "
+                "Previous Report Draft is a previous version of the report written by you based on some parts of the full context you cannot see anymore. "
+                "But those parts are still valid and should be considered as correct."
+                "And the context provided this time will be the final part of the full context. "
+                "Based on the previous report draft and the new information provided, "
+                "generate a complete, final report that integrates all relevant insights and conclusions. "
+                "Ensure all citations are properly kept, maintained, and updated. "
+                "Append a complete bibliography section at the end of your report in markdown format, listing each source with its corresponding URL."
+            )
+        else:
+            prompt = base_prompt
+    
     messages = [
         {"role": "system", "content": "You are a skilled report writer." + (f"There is also some extra system instructions: {system_instruction}" if system_instruction else "")},
         {"role": "user", "content": f"User Query: {user_query}\n\nGathered Relevant Contexts:\n{context_combined}" + (f"\n\nWriting plan from a planning agent:\n{report_planning}" if report_planning and not report_planning.startswith("Error:") else "") + f"\n\nWriting Instructions:{prompt}"}
@@ -837,11 +1012,103 @@ async def process_research(system_instruction: str, user_query: str, max_iterati
             # Check if we should continue
             if iteration + 1 < iteration_limit:
                 if WITH_PLANNING:
-                    new_research_plan = await judge_search_result_and_future_plan_aync(session, user_query, research_plan, aggregated_contexts)
+                    # Check if we need to handle truncation for the reasoning model
+                    if REASON_MODEL_MAX_INPUT > 8000:
+                        # Estimate tokens in the aggregated contexts
+                        context_combined = "\n".join(aggregated_contexts)
+                        context_tokens = estimate_tokens(context_combined)
+                        
+                        # Account for prompt overhead
+                        available_tokens = REASON_MODEL_MAX_INPUT - JUDGE_PROMPT_OVERHEAD
+                        
+                        # If context is too large for the model's capacity
+                        if context_tokens > available_tokens:
+                            # If we can only fit less than 25% of the context, abort
+                            if context_tokens > 4 * available_tokens:
+                                new_research_plan = "reasoning model has too small input token length that takes more than 4 iterations to finish judging search results, aborting..."
+                            else:
+                                # Split context into manageable chunks using the helper function
+                                chunks = split_contexts_into_chunks(aggregated_contexts, REASON_MODEL_MAX_INPUT, JUDGE_PROMPT_OVERHEAD)
+                                
+                                # Process each chunk and collect comments
+                                all_comments = []
+                                for i, chunk in enumerate(chunks):
+                                    chunk_comment = await judge_search_result_and_future_plan_aync(
+                                        session,
+                                        user_query,
+                                        research_plan,
+                                        chunk,
+                                        truncated=True,
+                                        note_from_previous=f"This is part {i+1} of {len(chunks)} of the context."
+                                    )
+                                    all_comments.append(f"Comments on part {i+1}: {chunk_comment}")
+                                
+                                # Make final call with all comments
+                                new_research_plan = await judge_search_result_and_future_plan_aync(
+                                    session,
+                                    user_query,
+                                    research_plan,
+                                    "Context too large to process at once. See notes from processing each part.",
+                                    truncated=False,
+                                    note_from_previous="\n\n".join(all_comments)
+                                )
+                        else:
+                            # Context fits within model's capacity
+                            new_research_plan = await judge_search_result_and_future_plan_aync(session, user_query, research_plan, context_combined)
+                    else:
+                        # No input limit, proceed normally
+                        new_research_plan = await judge_search_result_and_future_plan_aync(session, user_query, research_plan, "\n".join(aggregated_contexts))
                 else:
                     new_research_plan = None
 
-                new_search_queries = await get_new_search_queries_async(session, user_query, new_research_plan, all_search_queries, aggregated_contexts)
+                # Check if we need to handle truncation for the default model
+                if DEFAULT_MODEL_MAX_INPUT > 8000:
+                    # Estimate tokens in the aggregated contexts
+                    context_combined = "\n".join(aggregated_contexts)
+                    context_tokens = estimate_tokens(context_combined)
+                    
+                    # Account for prompt overhead
+                    available_tokens = DEFAULT_MODEL_MAX_INPUT - SEARCH_PROMPT_OVERHEAD
+                    
+                    # If context is too large for the model's capacity
+                    if context_tokens > available_tokens:
+                        # If we can only fit less than 25% of the context, abort
+                        if context_tokens > 4 * available_tokens:
+                            new_search_queries = "default model has too small input token length that takes more than 4 iterations to finish generating search queries, aborting..."
+                        else:
+                            # Split context into manageable chunks using the helper function
+                            chunks = split_contexts_into_chunks(aggregated_contexts, DEFAULT_MODEL_MAX_INPUT, SEARCH_PROMPT_OVERHEAD)
+                            
+                            # Process each chunk and collect comments
+                            all_comments = []
+                            for i, chunk in enumerate(chunks):
+                                chunk_comment = await get_new_search_queries_async(
+                                    session,
+                                    user_query,
+                                    new_research_plan,
+                                    all_search_queries,
+                                    [chunk],  # the function expects a list
+                                    truncated=True,
+                                    note_from_previous=f"This is part {i+1} of {len(chunks)} of the context."
+                                )
+                                all_comments.append(f"Comments on part {i+1}: {chunk_comment}")
+                            
+                            # Make final call with all comments
+                            new_search_queries = await get_new_search_queries_async(
+                                session,
+                                user_query,
+                                new_research_plan,
+                                all_search_queries,
+                                [],
+                                truncated=False,
+                                note_from_previous="\n\n".join(all_comments)
+                            )
+                    else:
+                        # Context fits within model's capacity
+                        new_search_queries = await get_new_search_queries_async(session, user_query, new_research_plan, all_search_queries, aggregated_contexts)
+                else:
+                    # No input limit, proceed normally
+                    new_search_queries = await get_new_search_queries_async(session, user_query, new_research_plan, all_search_queries, aggregated_contexts)
                 if new_search_queries == "<done>" or not new_search_queries:
                     break
                 all_search_queries.extend(new_search_queries)
@@ -852,11 +1119,88 @@ async def process_research(system_instruction: str, user_query: str, max_iterati
 
         # Generate final report
         if WITH_PLANNING:
-            final_report_planning = await generate_writing_plan_aync(session, user_query, aggregated_contexts)
+            # Check if we need to handle truncation for the writing plan
+            if REASON_MODEL_MAX_INPUT > 8000:
+                # Estimate tokens in the aggregated contexts
+                context_combined = "\n".join(aggregated_contexts)
+                context_tokens = estimate_tokens(context_combined)
+                
+                # Account for prompt overhead
+                available_tokens = REASON_MODEL_MAX_INPUT - WRITING_PROMPT_OVERHEAD
+                
+                # If context is too large for the model's capacity
+                if context_tokens > available_tokens:
+                    # If we can only fit less than 25% of the context, abort
+                    if context_tokens > 4 * available_tokens:
+                        final_report_planning = "reasoning model has too small input token length that takes more than 4 iterations to finish generating writing plan, aborting..."
+                    else:
+                        # Split context into manageable chunks using the helper function
+                        chunks = split_contexts_into_chunks(aggregated_contexts, REASON_MODEL_MAX_INPUT, WRITING_PROMPT_OVERHEAD)
+                        
+                        # Process each chunk and collect plans
+                        last_plan = None
+                        for i, chunk in enumerate(chunks):
+                            chunk_text = '\n'.join(chunk)
+                            current_plan = await generate_writing_plan_aync(
+                                session,
+                                user_query,
+                                chunk_text,
+                                truncated=True,
+                                note_from_previous=last_plan
+                            )
+                            last_plan = current_plan
+                        
+                        final_report_planning = last_plan
+                else:
+                    # Context fits within model's capacity
+                    final_report_planning = await generate_writing_plan_aync(session, user_query, aggregated_contexts)
+            else:
+                # No input limit, proceed normally
+                final_report_planning = await generate_writing_plan_aync(session, user_query, aggregated_contexts)
         else:
             final_report_planning = None
 
-        final_report= await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
+        # Check if we need to handle truncation for the final report
+        if DEFAULT_MODEL_MAX_INPUT > 8000:
+            # Estimate tokens in the aggregated contexts
+            context_combined = "\n".join(aggregated_contexts)
+            context_tokens = estimate_tokens(context_combined)
+            
+            # Account for prompt overhead
+            available_tokens = DEFAULT_MODEL_MAX_INPUT - REPORT_PROMPT_OVERHEAD
+            
+            # If context is too large for the model's capacity
+            if context_tokens > available_tokens:
+                # If we can only fit less than 25% of the context, abort
+                if context_tokens > 4 * available_tokens:
+                    final_report = "default model has too small input token length that takes more than 4 iterations to finish generating final report, aborting..."
+                else:
+                    # Split context into manageable chunks using the helper function
+                    chunks = split_contexts_into_chunks(aggregated_contexts, DEFAULT_MODEL_MAX_INPUT, REPORT_PROMPT_OVERHEAD)
+                    
+                    # Process each chunk and refine the report iteratively
+                    last_report = None
+                    for i, chunk in enumerate(chunks):
+                        chunk_text = '\n'.join(chunk)
+                        current_report = await generate_final_report_async(
+                            session,
+                            system_instruction,
+                            user_query,
+                            final_report_planning,
+                            chunk_text,
+                            truncated=True,
+                            note_from_previous=last_report
+                        )
+                        last_report = current_report
+                    
+                    final_report = last_report
+                    final_report += "\n\nNote: This report was generated by iteratively processing the research results due to model context limitations."
+            else:
+                # Context fits within model's capacity
+                final_report = await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
+        else:
+            # No input limit, proceed normally
+            final_report = await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
 
         if not final_report or len(final_report) < 200:
             final_report = (final_report or "") + "\n" + "We may encounter an error while writing, usually due to rate limit or context length.\n These are the original writing prompt, please copy it and try again with anothor model\n" + f"User Query: {user_query}\n\nGathered Relevant Contexts:\n" + "\n".join(aggregated_contexts) + (f"\n\nWriting plan from a planning agent:\n{final_report_planning}" if final_report_planning else "") + "You are an expert researcher and report writer. Based on the gathered contexts above and the original query, write a comprehensive, well-structured, and detailed report that addresses the query thoroughly."
@@ -961,12 +1305,115 @@ async def stream_research(system_instruction: str, user_query: str, max_iteratio
             # Check if we should continue
             if iteration + 1 < iteration_limit:
                 if WITH_PLANNING:
-                    new_research_plan = await judge_search_result_and_future_plan_aync(session, user_query, research_plan, aggregated_contexts)
+                    # Check if we need to handle truncation for the reasoning model
+                    if REASON_MODEL_MAX_INPUT > 8000:
+                        # Estimate tokens in the aggregated contexts
+                        context_combined = "\n".join(aggregated_contexts)
+                        context_tokens = estimate_tokens(context_combined)
+                        
+                        # Account for prompt overhead
+                        available_tokens = REASON_MODEL_MAX_INPUT - JUDGE_PROMPT_OVERHEAD
+                        
+                        # If context is too large for the model's capacity
+                        if context_tokens > available_tokens:
+                            # If we can only fit less than 25% of the context, abort
+                            if context_tokens > 4 * available_tokens:
+                                new_research_plan = "reasoning model has too small input token length that takes more than 4 iterations to finish judging search results, aborting..."
+                                yield create_chunk(f"Warning: {new_research_plan}\n\n")
+                            else:
+                                # Split context into manageable chunks using the helper function
+                                chunks = split_contexts_into_chunks(aggregated_contexts, REASON_MODEL_MAX_INPUT, JUDGE_PROMPT_OVERHEAD)
+                                
+                                yield create_chunk(f"Context too large for reasoning model, splitting into {len(chunks)} chunks...\n\n")
+                                
+                                # Process each chunk and collect comments
+                                all_comments = []
+                                for i, chunk in enumerate(chunks):
+                                    yield create_chunk(f"Processing chunk {i+1}/{len(chunks)}...\n\n")
+                                    chunk_comment = await judge_search_result_and_future_plan_aync(
+                                        session,
+                                        user_query,
+                                        research_plan,
+                                        chunk,
+                                        truncated=True,
+                                        note_from_previous=f"This is part {i+1} of {len(chunks)} of the context."
+                                    )
+                                    all_comments.append(f"Comments on part {i+1}: {chunk_comment}")
+                                
+                                # Make final call with all comments
+                                yield create_chunk("Synthesizing comments from all chunks...\n\n")
+                                new_research_plan = await judge_search_result_and_future_plan_aync(
+                                    session,
+                                    user_query,
+                                    research_plan,
+                                    "Context too large to process at once. See notes from processing each part.",
+                                    truncated=False,
+                                    note_from_previous="\n\n".join(all_comments)
+                                )
+                        else:
+                            # Context fits within model's capacity
+                            new_research_plan = await judge_search_result_and_future_plan_aync(session, user_query, research_plan, context_combined)
+                    else:
+                        # No input limit, proceed normally
+                        new_research_plan = await judge_search_result_and_future_plan_aync(session, user_query, research_plan, "\n".join(aggregated_contexts))
+                    
                     yield create_chunk(f"Updated Research Plan:\n{new_research_plan}\n\n")
                 else:
                     new_research_plan = None
 
-                new_search_queries = await get_new_search_queries_async(session, user_query, new_research_plan, all_search_queries, aggregated_contexts)
+                # Check if we need to handle truncation for the default model
+                if DEFAULT_MODEL_MAX_INPUT > 8000:
+                    # Estimate tokens in the aggregated contexts
+                    context_combined = "\n".join(aggregated_contexts)
+                    context_tokens = estimate_tokens(context_combined)
+                    
+                    # Account for prompt overhead
+                    available_tokens = DEFAULT_MODEL_MAX_INPUT - SEARCH_PROMPT_OVERHEAD
+                    
+                    # If context is too large for the model's capacity
+                    if context_tokens > available_tokens:
+                        # If we can only fit less than 25% of the context, abort
+                        if context_tokens > 4 * available_tokens:
+                            new_search_queries = "default model has too small input token length that takes more than 4 iterations to finish generating search queries, aborting..."
+                            yield create_chunk(f"Warning: {new_search_queries}\n\n")
+                        else:
+                            # Split context into manageable chunks using the helper function
+                            chunks = split_contexts_into_chunks(aggregated_contexts, DEFAULT_MODEL_MAX_INPUT, SEARCH_PROMPT_OVERHEAD)
+                            
+                            yield create_chunk(f"Context too large for default model, splitting into {len(chunks)} chunks...\n\n")
+                            
+                            # Process each chunk and collect comments
+                            all_comments = []
+                            for i, chunk in enumerate(chunks):
+                                yield create_chunk(f"Processing chunk {i+1}/{len(chunks)}...\n\n")
+                                chunk_comment = await get_new_search_queries_async(
+                                    session,
+                                    user_query,
+                                    new_research_plan,
+                                    all_search_queries,
+                                    [chunk],  # the function expects a list
+                                    truncated=True,
+                                    note_from_previous=f"This is part {i+1} of {len(chunks)} of the context."
+                                )
+                                all_comments.append(f"Comments on part {i+1}: {chunk_comment}")
+                            
+                            # Make final call with all comments
+                            yield create_chunk("Synthesizing comments from all chunks...\n\n")
+                            new_search_queries = await get_new_search_queries_async(
+                                session,
+                                user_query,
+                                new_research_plan,
+                                all_search_queries,
+                                [],
+                                truncated=False,
+                                note_from_previous="\n\n".join(all_comments)
+                            )
+                    else:
+                        # Context fits within model's capacity
+                        new_search_queries = await get_new_search_queries_async(session, user_query, new_research_plan, all_search_queries, aggregated_contexts)
+                else:
+                    # No input limit, proceed normally
+                    new_search_queries = await get_new_search_queries_async(session, user_query, new_research_plan, all_search_queries, aggregated_contexts)
                 if new_search_queries == "<done>":
                     yield create_chunk("Research complete. Generating final report...\n\n")
                     break
@@ -985,14 +1432,100 @@ async def stream_research(system_instruction: str, user_query: str, max_iteratio
 
         # Generate final report
         if WITH_PLANNING:
-            final_report_planning = await generate_writing_plan_aync(session, user_query, aggregated_contexts)
-            if final_report_planning:
-                yield create_chunk(f"Writing Plan:\n{final_report_planning}\n\n")
+            # Check if we need to handle truncation for the writing plan
+            if REASON_MODEL_MAX_INPUT > 8000:
+                # Estimate tokens in the aggregated contexts
+                context_combined = "\n".join(aggregated_contexts)
+                context_tokens = estimate_tokens(context_combined)
+                
+                # Account for prompt overhead
+                available_tokens = REASON_MODEL_MAX_INPUT - WRITING_PROMPT_OVERHEAD
+                
+                # If context is too large for the model's capacity
+                if context_tokens > available_tokens:
+                    # If we can only fit less than 25% of the context, abort
+                    if context_tokens > 4 * available_tokens:
+                        final_report_planning = "reasoning model has too small input token length that takes more than 4 iterations to finish generating writing plan, aborting..."
+                        yield create_chunk(f"Warning: {final_report_planning}\n\n")
+                    else:
+                        # Split context into manageable chunks using the helper function
+                        chunks = split_contexts_into_chunks(aggregated_contexts, REASON_MODEL_MAX_INPUT, WRITING_PROMPT_OVERHEAD)
+                        
+                        yield create_chunk(f"Context too large for reasoning model, splitting into {len(chunks)} chunks for writing plan...\n\n")
+                        
+                        # Process each chunk and collect plans
+                        last_plan = None
+                        for i, chunk in enumerate(chunks):
+                            yield create_chunk(f"Processing writing plan chunk {i+1}/{len(chunks)}...\n\n")
+                            current_plan = await generate_writing_plan_aync(
+                                session,
+                                user_query,
+                                chunk,
+                                truncated=True,
+                                note_from_previous=last_plan
+                            )
+                            last_plan = current_plan
+                        
+                        final_report_planning = last_plan
+                        yield create_chunk(f"Writing Plan:\n{final_report_planning}\n\n")
+                else:
+                    # Context fits within model's capacity
+                    final_report_planning = await generate_writing_plan_aync(session, user_query, aggregated_contexts)
+                    if final_report_planning:
+                        yield create_chunk(f"Writing Plan:\n{final_report_planning}\n\n")
+            else:
+                # No input limit, proceed normally
+                final_report_planning = await generate_writing_plan_aync(session, user_query, aggregated_contexts)
+                if final_report_planning:
+                    yield create_chunk(f"Writing Plan:\n{final_report_planning}\n\n")
         else:
             final_report_planning = None
 
         yield create_chunk("\n</think>\n\n")
-        final_report = await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
+        
+        # Check if we need to handle truncation for the final report
+        if DEFAULT_MODEL_MAX_INPUT > 8000:
+            # Estimate tokens in the aggregated contexts
+            context_combined = "\n".join(aggregated_contexts)
+            context_tokens = estimate_tokens(context_combined)
+            
+            # Account for prompt overhead
+            available_tokens = DEFAULT_MODEL_MAX_INPUT - REPORT_PROMPT_OVERHEAD
+            
+            # If context is too large for the model's capacity
+            if context_tokens > available_tokens:
+                # If we can only fit less than 25% of the context, abort
+                if context_tokens > 4 * available_tokens:
+                    final_report = "default model has too small input token length that takes more than 4 iterations to finish generating final report, aborting..."
+                else:
+                    # Split context into manageable chunks using the helper function
+                    chunks = split_contexts_into_chunks(aggregated_contexts, DEFAULT_MODEL_MAX_INPUT, REPORT_PROMPT_OVERHEAD)
+                    
+                    yield create_chunk(f"Context too large for default model, splitting into {len(chunks)} chunks for final report...\n\n")
+                    
+                    # Process each chunk and refine the report iteratively
+                    last_report = None
+                    for i, chunk in enumerate(chunks):
+                        yield create_chunk(f"Processing final report chunk {i+1}/{len(chunks)}...\n\n")
+                        current_report = await generate_final_report_async(
+                            session,
+                            system_instruction,
+                            user_query,
+                            final_report_planning,
+                            chunk,
+                            truncated=True,
+                            note_from_previous=last_report
+                        )
+                        last_report = current_report
+                    
+                    final_report = last_report
+                    final_report += "\n\nNote: This report was generated by iteratively processing the research results due to model context limitations."
+            else:
+                # Context fits within model's capacity
+                final_report = await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
+        else:
+            # No input limit, proceed normally
+            final_report = await generate_final_report_async(session, system_instruction, user_query, final_report_planning, aggregated_contexts)
         if not final_report or len(final_report) < 200:
             final_report = (final_report or "") + "\n\n" + "These are the writing prompt, please copy it and try again with anothor model\n\n---\n\n---\n\n" + f"User Query: {user_query}\n\nGathered Relevant Contexts:\n" + "\n\n".join(aggregated_contexts) + (f"\n\nWriting plan from a planning agent:\n{final_report_planning}" if final_report_planning else "") + "\n\nYou are an expert researcher and report writer. Based on the gathered contexts above and the original query, write a comprehensive, well-structured, and detailed report that addresses the query thoroughly.\n\n---\n\n---"
         yield create_chunk(final_report)
@@ -1023,6 +1556,13 @@ async def async_main(system_instruction: str, user_query: str, max_iterations: i
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
+    # Check for model max input token limit
+    if DEFAULT_MODEL_MAX_INPUT > 0 and DEFAULT_MODEL_MAX_INPUT < 8000 and REASON_MODEL_MAX_INPUT > 0 and REASON_MODEL_MAX_INPUT < 8000:
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": "default or reason model with too small input tokens, please use a model that can take more input tokens"}}
+        )
+        
     # Validate model
     if request.model != "deep_researcher":
         return JSONResponse(
