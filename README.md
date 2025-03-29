@@ -1,5 +1,8 @@
 # OpenDeepResearcher via Searxng 🧑‍🔬
 
+> [!IMPORTANT]
+> **This project is not abandoned.** I can asure you, just I am currently busy with my thesis and thus development becomes slow. I still want to add more features that is important to me (and hopefully also you), see statement here: https://github.com/benhaotang/OpenDeepResearcher-via-searxng/discussions/15 Thanks for all the inquiries and appreciations.
+
 A robust research tool that uses AI to perform comprehensive research on any topic, offering flexible deployment through Docker, or simply direct Python execution as OpenAI compatible endpoint with whatever frontend you like, can also operate pure locally with [ollama](https://ollama.com) integration.
 
 ![OpenDeepResearcher](./demos/Demo.png)
